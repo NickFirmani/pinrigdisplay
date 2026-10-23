@@ -1,6 +1,44 @@
-# Pin Rig Display
+# Pin Rig Display Controller
 
-Minimal Raspberry Pi SPI driver/test for an Elecrow ST7796 display.
+A small Python service that drives a 480x320 Elecrow ST7796 display and exposes
+page selection over a LAN HTTP API. It restores the last successfully displayed
+page after a restart.
+
+## Pages
+
+- `standby`: the Lyons Classic Pinball logo on `#070f20`.
+- `on_air`: a retro ON AIR light with a slow four-second pulse.
+- `message`: a custom title and wrapped body message.
+
+## API
+
+The service listens on TCP port `48193` without authentication. It is intended
+for a trusted local network.
+
+```sh
+curl -X PUT http://media-pi-2.local:48193/api/display \
+  -H 'Content-Type: application/json' \
+  -d '{"page":"on_air"}'
+
+curl -X PUT http://media-pi-2.local:48193/api/display \
+  -H 'Content-Type: application/json' \
+  -d '{"page":"message","title":"PLAYER 2","body":"Please approach the machine"}'
+
+curl -X PUT http://media-pi-2.local:48193/api/display \
+  -H 'Content-Type: application/json' \
+  -d '{"page":"standby"}'
+```
+
+Read the current state or service health:
+
+```sh
+curl http://media-pi-2.local:48193/api/display
+curl http://media-pi-2.local:48193/healthz
+```
+
+Successful updates return HTTP 200. Invalid requests return 4xx JSON errors;
+display failures return HTTP 503. Title and body lengths are limited to 40 and
+240 characters respectively.
 
 ## Wiring
 
@@ -15,15 +53,43 @@ Minimal Raspberry Pi SPI driver/test for an Elecrow ST7796 display.
 | SCK | 23 | GPIO11 / SPI0 SCLK |
 | LED | 17 | 3.3 V |
 
-## Run
+The display is write-only with this wiring. Do not connect the backlight directly
+to a GPIO; dimming requires suitable switching hardware.
 
-The Pi needs SPI enabled and the Debian packages providing `python3-spidev`,
-`python3-rpi.gpio`, and `python3-pil`.
+## Development
+
+The target Pi needs the Debian packages that provide Pillow, `spidev`, and
+`RPi.GPIO`. Run the deterministic test suite with:
 
 ```sh
-python3 st7796_hello.py
+python3 -m unittest discover -v
 ```
 
-The script initializes the controller in 480x320 landscape RGB565 mode and
-draws a yellow `hello` centered on a dark background. If long jumper wires make
-the default 20 MHz SPI clock unreliable, retry with `--speed 10000000`.
+Run the service in the foreground with:
+
+```sh
+python3 -m display_controller.server --config config.toml
+```
+
+Configuration includes the HTTP bind address, SPI/GPIO settings, animation rate,
+logo path, and persisted-state path. Relative paths are resolved from the
+configuration file's directory.
+
+## systemd
+
+The supplied unit expects this repository at
+`/home/admin/Projects/pinrigdisplay` and runs as `admin` with access to the
+`spi` and `gpio` groups.
+
+```sh
+sudo install -m 0644 display-controller.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now display-controller.service
+```
+
+Inspect it with:
+
+```sh
+systemctl status display-controller.service
+journalctl -u display-controller.service -f
+```

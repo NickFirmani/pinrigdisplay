@@ -1,0 +1,19 @@
+[server]
+host = "0.0.0.0"
+port = 48193
+
+[display]
+spi_bus = 0
+spi_device = 0
+dc_pin = 24
+reset_pin = 25
+speed_hz = 20000000
+madctl = 40 # 0x28: landscape, BGR, row/column exchange
+
+[pages]
+logo_path = "assets/logo.png"
+animation_fps = 8
+pulse_seconds = 4.0
+
+[state]
+path = "/var/lib/display-controller/state.json"

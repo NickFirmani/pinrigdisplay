@@ -1,0 +1,28 @@
+[Unit]
+Description=Pin Rig ST7796 display controller
+After=local-fs.target network.target
+
+[Service]
+Type=simple
+User=admin
+Group=admin
+SupplementaryGroups=spi gpio
+WorkingDirectory=/home/admin/Projects/pinrigdisplay
+ExecStart=/usr/bin/python3 -m display_controller.server --config /home/admin/Projects/pinrigdisplay/config.toml
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=10
+StateDirectory=display-controller
+StateDirectoryMode=0750
+RuntimeDirectory=display-controller
+RuntimeDirectoryMode=0750
+Environment=LG_WD=/run/display-controller
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/display-controller
+
+[Install]
+WantedBy=multi-user.target
