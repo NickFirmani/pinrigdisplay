@@ -2,9 +2,18 @@
 
 ## Purpose
 
-This repository contains Python software for an Elecrow ST7796 display connected
-to a Raspberry Pi 4B over SPI. Keep the project straightforward, dependable on
-the target hardware, and easy to understand and change.
+This repository contains Python software for an Elecrow ST7796 display. Current
+UI development uses a Raspberry Pi 4B connected directly over SPI. The intended
+setup moves the display onto a Pi Zero 2 W connected by USB serial to the 4B;
+the 4B hosts an HTTP service accepting commands from other event producers.
+Keep both packages small, separate, dependable, and easy to understand and change.
+
+The device renders explicit state signs and generic messages. Keep OBS and
+other source interpretation in separate producer integrations. Use shared
+command models and behavior for local SPI development, USB serial, and optional
+device Wi-Fi HTTP. Installing the device must not require host or producer
+clients. See README.md and the separate display, host, and event producer plans
+in docs/ for current behavior and proposed work.
 
 ## Python Style
 
