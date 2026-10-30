@@ -99,6 +99,10 @@ class PageRenderer:
             return self.standby()
         if request.page == "on_air":
             return self.on_air(0.80)
+        if request.page == "camera_active":
+            return self.camera_status(active=True)
+        if request.page == "camera_inactive":
+            return self.camera_status(active=False)
         if request.page == "message":
             assert request.title is not None and request.body is not None
             return self.message(request.title, request.body)
@@ -137,19 +141,63 @@ class PageRenderer:
         return image
 
     def on_air(self, level: float) -> Image.Image:
-        image = Image.new("RGB", (WIDTH, HEIGHT), "#100706")
+        image = self._sign_housing(background="#100706", housing="#35100d",
+                                   rim="#641a12", trim="#a94121", outline="#170706")
+        draw = ImageDraw.Draw(image)
+
+        self._draw_lit_panel(draw, level)
+        return image
+
+    @staticmethod
+    def _sign_housing(*, background: str, housing: str, rim: str,
+                      trim: str, outline: str) -> Image.Image:
+        image = Image.new("RGB", (WIDTH, HEIGHT), background)
         draw = ImageDraw.Draw(image)
 
         draw.rounded_rectangle((10, 30, 470, 290), radius=34,
-                               fill="#35100d", outline="#170706", width=6)
+                               fill=housing, outline=outline, width=6)
         draw.rounded_rectangle((20, 40, 460, 280), radius=27,
-                               fill="#641a12", outline="#a94121", width=5)
+                               fill=rim, outline=trim, width=5)
         for x in (31, 449):
             for y in (51, 269):
                 draw.ellipse((x - 7, y - 7, x + 7, y + 7),
                              fill="#d39254", outline="#3d160e", width=2)
 
-        self._draw_lit_panel(draw, level)
+        return image
+
+    def camera_status(self, *, active: bool) -> Image.Image:
+        """Render a steady camera sign in the same housing as ON AIR."""
+        if active:
+            image = self._sign_housing(background="#100c06", housing="#35250d",
+                                       rim="#644312", trim="#a97821", outline="#100c06")
+            face, edge, highlight = "#b97812", "#ffc04c", "#ffda88"
+            stripe, shadow, text = "#986010", "#66400a", "#fff4cc"
+            title, subtitle = "ACTIVE", "NOT ON AIR"
+        else:
+            image = self._sign_housing(background="#090d12", housing="#1e2833",
+                                       rim="#344250", trim="#6b7d8f", outline="#090d12")
+            face, edge, highlight = "#344657", "#829aaf", "#a2b5c5"
+            stripe, shadow, text = "#2c3b4a", "#18222e", "#e5edf2"
+            title, subtitle = "INACTIVE", ""
+
+        draw = ImageDraw.Draw(image)
+        self._panel_background(draw, face=face, edge=edge, highlight=highlight,
+                               stripe=stripe)
+        x0, y0, x1, y1 = ON_AIR_REGION
+        if active:
+            _centered_text(draw, (x0, y0 + 16, x1, y0 + 48), "CAMERA",
+                           font=_font(28, bold=True), fill=text)
+        title_font = _fit_font(draw, title, maximum=86, minimum=40,
+                               width=x1 - x0 - 36)
+        title_top = y0 + 44 if active else y0
+        title_bottom = y1 - 50 if active else y1
+        _centered_text(draw, (x0 + 2, title_top + 4, x1 + 2, title_bottom + 4), title,
+                       font=title_font, fill=shadow)
+        _centered_text(draw, (x0, title_top, x1, title_bottom), title,
+                       font=title_font, fill=text)
+        if subtitle:
+            _centered_text(draw, (x0, y1 - 44, x1, y1 - 12), subtitle,
+                           font=_font(23, bold=True), fill=text)
         return image
 
     def on_air_frames(self, count: int) -> list[Image.Image]:
@@ -169,14 +217,10 @@ class PageRenderer:
         edge = _scale_color((255, 130, 44), max(0.82, level))
         highlight = _scale_color((255, 176, 72), level)
 
-        draw.rounded_rectangle((x0, y0, x1 - 1, y1 - 1), radius=18,
-                               fill=face, outline=edge, width=6)
-        draw.rounded_rectangle((x0 + 10, y0 + 10, x1 - 11, y1 - 11), radius=12,
-                               outline=highlight, width=3)
-
-        for x in range(x0 + 28, x1 - 20, 48):
-            draw.line((x, y0 + 14, x - 18, y1 - 15),
-                      fill=_scale_color((170, 30, 16), level), width=2)
+        PageRenderer._panel_background(
+            draw, face=face, edge=edge, highlight=highlight,
+            stripe=_scale_color((170, 30, 16), level),
+        )
 
         title_font = _font(103, bold=True)
         shadow_area = (x0 + 2, y0 + 4, x1 + 2, y1 - 24)
@@ -189,3 +233,17 @@ class PageRenderer:
         _centered_text(draw, (x0, y1 - 42, x1, y1 - 12),
                        "●  LIVE TRANSMISSION  ●", font=live_font,
                        fill=_scale_color((255, 211, 128), level))
+
+    @staticmethod
+    def _panel_background(draw: ImageDraw.ImageDraw, *,
+                          face: str | tuple[int, int, int],
+                          edge: str | tuple[int, int, int],
+                          highlight: str | tuple[int, int, int],
+                          stripe: str | tuple[int, int, int]) -> None:
+        x0, y0, x1, y1 = ON_AIR_REGION
+        draw.rounded_rectangle((x0, y0, x1 - 1, y1 - 1), radius=18,
+                               fill=face, outline=edge, width=6)
+        draw.rounded_rectangle((x0 + 10, y0 + 10, x1 - 11, y1 - 11), radius=12,
+                               outline=highlight, width=3)
+        for x in range(x0 + 28, x1 - 20, 48):
+            draw.line((x, y0 + 14, x - 18, y1 - 15), fill=stripe, width=2)

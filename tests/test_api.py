@@ -61,6 +61,16 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(body, {"status": "ok", "page": "standby"})
 
+    def test_camera_pages_can_be_selected_and_read_back(self) -> None:
+        for page in ("camera_active", "camera_inactive"):
+            with self.subTest(page=page):
+                status, body = self.request("PUT", "/api/display", {"page": page})
+                self.assertEqual(status, 200)
+                self.assertEqual(body["page"], page)
+                status, body = self.request("GET", "/api/display")
+                self.assertEqual(status, 200)
+                self.assertEqual(body, {"page": page, "healthy": True})
+
     def test_invalid_requests_have_structured_errors(self) -> None:
         status, body = self.request("PUT", "/api/display", {"page": "missing"})
         self.assertEqual(status, 422)

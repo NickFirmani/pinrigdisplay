@@ -24,6 +24,15 @@ class DisplayRequestTests(unittest.TestCase):
         with self.assertRaisesRegex(RequestValidationError, "body is required"):
             DisplayRequest.from_mapping({"page": "message", "title": "Hello"})
 
+    def test_camera_pages_accept_only_page_selection(self) -> None:
+        for page in ("camera_active", "camera_inactive"):
+            with self.subTest(page=page):
+                request = DisplayRequest.from_mapping({"page": page.upper()})
+                self.assertEqual(request.to_dict(), {"page": page})
+                for field in ("title", "body"):
+                    with self.assertRaisesRegex(RequestValidationError, "does not accept"):
+                        DisplayRequest.from_mapping({"page": page, field: "custom"})
+
     def test_rejects_unknown_pages_and_fields(self) -> None:
         with self.assertRaisesRegex(RequestValidationError, "page must be one of"):
             DisplayRequest.from_mapping({"page": "unknown"})

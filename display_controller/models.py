@@ -31,9 +31,9 @@ class DisplayRequest:
         if not isinstance(page, str):
             raise RequestValidationError("page must be a string")
         page = page.strip().lower()
-        if page not in {"standby", "on_air", "message"}:
+        if page not in {"standby", "on_air", "camera_active", "camera_inactive", "message"}:
             raise RequestValidationError(
-                "page must be one of: standby, on_air, message"
+                "page must be one of: standby, on_air, camera_active, camera_inactive, message"
             )
 
         if page != "message":

@@ -4,11 +4,15 @@ A small Python service that drives a 480x320 Elecrow ST7796 display and exposes
 page selection over a LAN HTTP API. It restores the last successfully displayed
 page after a restart.
 
-## Pages
+## Pages (update me)
 
 - `standby`: the Lyons Classic Pinball logo on `#070f20`.
 - `on_air`: a retro ON AIR light with a slow four-second pulse.
-- `message`: a custom title and wrapped body message.
+- `camera_active`: a matching amber CAMERA ACTIVE sign with NOT ON AIR below.
+- `camera_inactive`: a matching slate sign labeled INACTIVE.
+
+![Camera active sign](assets/camera-active.png)
+![Inactive sign](assets/inactive.png)
 
 ## API
 
@@ -18,16 +22,13 @@ for a trusted local network.
 ```sh
 curl -X PUT http://media-pi-2.local:48193/api/display \
   -H 'Content-Type: application/json' \
-  -d '{"page":"on_air"}'
+  -d '{"page":"on_air"}' # (one of [standby, on_air, camera_active, inactive, 
 
-curl -X PUT http://media-pi-2.local:48193/api/display \
-  -H 'Content-Type: application/json' \
-  -d '{"page":"message","title":"PLAYER 2","body":"Please approach the machine"}'
-
-curl -X PUT http://media-pi-2.local:48193/api/display \
-  -H 'Content-Type: application/json' \
-  -d '{"page":"standby"}'
+... update me
 ```
+
+# Page Types
+
 
 Read the current state or service health:
 
@@ -37,8 +38,7 @@ curl http://media-pi-2.local:48193/healthz
 ```
 
 Successful updates return HTTP 200. Invalid requests return 4xx JSON errors;
-display failures return HTTP 503. Title and body lengths are limited to 40 and
-240 characters respectively.
+display failures return HTTP 503.
 
 ## Wiring
 

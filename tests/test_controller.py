@@ -120,6 +120,32 @@ class ControllerTests(unittest.TestCase):
 
         self.assertFalse(controller.status().healthy)
 
+    def test_camera_pages_stop_live_animation_and_persist(self) -> None:
+        for page in ("camera_active", "camera_inactive"):
+            with self.subTest(page=page):
+                controller, display, state, animator = self.make_controller()
+                controller.start()
+                controller.set_page(DisplayRequest(page="on_air"))
+                stops_before = animator.stop_count
+                request = DisplayRequest.from_mapping({"page": page})
+
+                status = controller.set_page(request)
+
+                self.assertTrue(status.healthy)
+                self.assertEqual(status.request, request)
+                self.assertEqual(state.saves[-1], request)
+                self.assertEqual(animator.stop_count, stops_before + 1)
+                self.assertEqual(len(animator.starts), 1)
+                self.assertEqual(len(display.writes), 3)
+
+                restored, _display, restored_state, restored_animator = self.make_controller(
+                    saved=request,
+                )
+                restored.start()
+                self.assertEqual(restored.status().request, request)
+                self.assertEqual(restored_state.saves, [])
+                self.assertEqual(restored_animator.starts, [])
+
 
 if __name__ == "__main__":
     unittest.main()
