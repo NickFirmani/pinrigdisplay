@@ -74,14 +74,9 @@ class PicoTests(unittest.TestCase):
         from pinrig_host.delivery import LocalDelivery
         from pinrig_host.service import Host
         from pinrig_producers.authority import Authority
-        from pinrig_producers.client import Client
+        from pinrig_host.client import LocalClient
         host=Host(LocalDelivery(self.device),clock=self.clock)
-        class LocalClient(Client):
-            def _send(self,operation,params,request_id):
-                value={'version':1,'request_id':request_id,'operation':operation,'params':params}
-                if self.session:value['session']=self.session
-                return host.handle(value)
-        authority=Authority('rig1',LocalClient('http://unused'),clock=self.clock)
+        authority=Authority('rig1',LocalClient(host),clock=self.clock)
         # Five minutes includes source publication, host renewals and booth traffic.
         for second in range(300):
             authority.observe_obs(False,8);authority.observe_video(True)

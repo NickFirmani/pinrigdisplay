@@ -1,5 +1,10 @@
 # Command protocol v1
 
+In production the authority and USB host module run in one `pinrig-rig`
+process. The HTTP command interface below is for the optional standalone
+maintenance host or Linux device; the rig service exposes booth/OBS/status
+endpoints instead and calls the host module in-process.
+
 HTTP: `POST /api/commands`, `Content-Type: application/json`. USB: UTF-8 JSON
 followed by newline, 115200 baud. Both accept the same envelope and return the
 same result fields. Frames and HTTP bodies are limited to 8192 bytes (excluding

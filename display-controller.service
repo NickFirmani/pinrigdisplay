@@ -4,8 +4,8 @@ After=local-fs.target network.target
 
 [Service]
 Type=simple
-User=pinrig
-Group=pinrig
+User=pinrigdisplay
+Group=pinrigdisplay
 SupplementaryGroups=spi gpio dialout
 ExecStart=/opt/pinrig-device/bin/display-controller --config /etc/pinrig-display.toml
 Restart=on-failure

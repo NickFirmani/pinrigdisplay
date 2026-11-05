@@ -290,7 +290,7 @@ class BoothContractTests(unittest.TestCase):
         from tests.helpers import Clock as DeviceClock, Display, Pages
         from pinrig_host.delivery import LocalDelivery
         from pinrig_host.service import Host
-        from pinrig_producers.client import Client as HTTPClient
+        from pinrig_host.client import LocalClient
 
         with TemporaryDirectory() as directory:
             clock = DeviceClock()
@@ -299,15 +299,7 @@ class BoothContractTests(unittest.TestCase):
             host = Host(LocalDelivery(controller), clock=clock,
                 interactions=InteractionStore(Path(directory) / 'host.sqlite3'))
 
-            class LocalClient(HTTPClient):
-                def __init__(self): super().__init__('http://unused')
-                def _send(self, operation, params, request_id):
-                    command = {'version': 1, 'operation': operation, 'params': params,
-                               'request_id': request_id}
-                    if self.session: command['session'] = self.session
-                    return host.handle(command)
-
-            authority = Authority('rig1', LocalClient(), clock=clock)
+            authority = Authority('rig1', LocalClient(host), clock=clock)
             controller.start()
             try:
                 authority.observe_obs(False, 8)

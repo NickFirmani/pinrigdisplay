@@ -4,13 +4,13 @@ The first assembled USB unit is a **Pico 2 W (RP2350)**. Its MicroPython firmwar
 build/deployment steps and resource limits are in [firmware/pico](firmware/pico/README.md).
 The Linux application below remains the direct-SPI / Pi Zero development path;
 it is not the executable installed on the Pico. Both use the same protocol v1
-command validator and the same HTTP host. Pico wiring is documented in
+command validator and USB transport module. Pico wiring is documented in
 [hardware/pinouts.md](hardware/pinouts.md).
 
 Python 3.11+ software for the 480 × 320 Elecrow ST7796 display:
 
 ```text
-OBS on stream PC → rig PC authority → local HTTP/USB host → Pico 2 W → SPI display
+OBS on stream PC → pinrig-rig (authority + USB) → Pico 2 W → SPI display
 ```
 
 Direct-SPI development on the 4B runs the same device command handler over HTTP.
@@ -31,11 +31,12 @@ boot starts UNKNOWN; current state must arrive and its lease must be renewed.
   500 ms message transitions, steady lettering and subtle sign animation.
 - One visible/three pending messages, priority preemption, FIFO ties,
   transition-aware expiry, cancellation and explicit message outcomes.
-- Independently installable HTTP host with serial delivery, bounded reconnect,
+- Embedded USB delivery with bounded reconnect,
   freshness-aware lease renewal and explicit uncertain-delivery reporting.
 - Separate producer observation policy and HTTP client, per-rig routing,
   freshness, manual selection precedence and stale/unmoderated notice filtering.
-- Per-rig state authority, local videonode consumer adapter and booth page;
+- One service per rig owns state, USB, durable tap receipts and the booth page;
+  a local videonode consumer adapter supplies usage observations, and
   a separate OBS generator reports streaming/program-scene state to both rigs.
 - Deterministic tests and a hardware-free layout preview command.
 
@@ -65,14 +66,14 @@ Install DejaVu Sans fonts on the Pi (`fonts-dejavu-core` on Raspberry Pi OS).
 A macOS Arial fallback supports local visual checks; actual Pi typography should
 be checked using DejaVu. Hardware imports occur only when creating the SPI adapter.
 
-Separate host and producer installations:
+Rig and stream-PC installations:
 
 ```sh
-# Host: no Pillow or SPI/GPIO dependencies.
-python -m pip install ./pinrig_protocol ./pinrig_host
-pinrig-host --serial /dev/serial/by-id/YOUR_DEVICE --bind 127.0.0.1
-# Optional producer authority/client, on its own machine/environment:
-python -m pip install ./pinrig_protocol ./pinrig_producers
+# Rig PC: one service, no Pillow or SPI/GPIO dependencies.
+python -m pip install ./pinrig_protocol ./pinrig_host './pinrig_producers[rig]'
+pinrig-rig --rig rig1 --serial /dev/serial/by-id/YOUR_DEVICE --bind 0.0.0.0
+# Stream PC: OBS adapter, no USB dependency.
+python -m pip install ./pinrig_protocol './pinrig_producers[obs]'
 ```
 
 Each directory has its own distribution metadata. Build/install the shared
@@ -82,7 +83,13 @@ installing host-only serial dependencies. Tests never open network/hardware or s
 
 ## Send explicit commands
 
-The default listener is loopback port `48193`. The service has no authentication;
+The following examples are for direct-device HTTP or the optional standalone
+maintenance host. Stop `pinrig-rig` before running
+`pinrig-host --serial /dev/serial/by-id/YOUR_DEVICE --bind 127.0.0.1`;
+only one process may own USB. The combined rig service instead exposes its
+booth/status/OBS endpoints on port 48194 and has no raw command listener.
+
+The maintenance listener defaults to loopback port `48193`. It has no authentication;
 configure a deliberate bind address and network access for intended callers.
 Both device and host expose `POST /api/commands` and `GET /healthz`.
 
@@ -147,10 +154,18 @@ Touch uses pressure polling on CE1 at 100 kHz; the LCD remains on CE0.
 
 ## Deployment
 
+Production uses one `pinrig-rig.service` per Armbian rig PC and
+`pinrig-obs.service` on the stream PC. The rig unit reads `/etc/pinrig-rig.env`
+and owns USB directly. Follow [deployment and migration](docs/deployment.md),
+including disabling any old `pinrig-host.service` and preserving its receipt
+database. The host module and standalone command remain available for maintenance.
+
+### Optional Linux display / standalone host development
+
 The device unit expects `/opt/pinrig-device/bin/display-controller` and
 `/etc/pinrig-display.toml`. The host unit expects `/opt/pinrig-host/bin/pinrig-host`
 and `/etc/pinrig-host.env`, containing `PINRIG_SERIAL=/dev/serial/by-id/...` and
-`PINRIG_BIND=127.0.0.1` (or the intended interface). Create a dedicated `pinrig`
+`PINRIG_BIND=127.0.0.1` (or the intended interface). Create a dedicated `pinrigdisplay`
 service account and grant only the groups required by that machine: `spi`,
 `gpio`, and/or `dialout`. Create the respective virtual environments at those
 paths and install the relevant packages. Copy/edit configuration outside Git.

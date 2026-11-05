@@ -11,7 +11,7 @@ Debian stream PC: OBS → pinrig-obs ──HTTP──┬→ rig1 pinrig-rig
                                        └→ rig2 pinrig-rig
 
 Each Armbian rig PC:
-  local videonode SSE → pinrig-rig authority → local pinrig-host → USB → display
+  local videonode SSE → pinrig-rig (authority + USB delivery) → display firmware
   local booth page   → generic message/clear ↗
 ```
 
@@ -58,26 +58,30 @@ Reconnects pause for 2 seconds so videonode's once-per-second subscriber-count
 poll can observe the departure and re-emit idle zero counts on the next join.
 
 The authority republishes every second with a 3-second lease and validity.
-If the rig service stops, the host/device falls back to UNKNOWN instead of
-continually renewing the last sign. The USB host remains source-agnostic and
-is the only normal writer to the device. Do not run a second authority for a rig.
+If the rig service stops, the device falls back to UNKNOWN when its lease
+expires. Source interpretation and USB delivery remain separate modules inside
+one process. Do not run a second authority or serial-port owner for a rig.
 
 ## Run on each Armbian rig PC
 
-Requires Python 3.11+. Install into the host environment, with no rendering or
+Requires Python 3.11+. Install into the rig environment, with no rendering or
 OBS dependencies on these machines:
 
 ```sh
-python -m pip install ./pinrig_protocol ./pinrig_host ./pinrig_producers
-pinrig-host --serial /dev/serial/by-id/YOUR_DEVICE --bind 127.0.0.1
-# In another terminal (use rig2 on the other PC):
-pinrig-rig --rig rig1 --bind 0.0.0.0
+python -m pip install ./pinrig_protocol ./pinrig_host './pinrig_producers[rig]'
+# Use rig2 on the other PC:
+pinrig-rig --rig rig1 --serial /dev/serial/by-id/YOUR_DEVICE --bind 0.0.0.0
 ```
 
 Open `http://RIG_HOSTNAME:48194/` for that rig's booth page. The default CLI bind
 is loopback; a LAN bind is needed for the stream PC and remote booth operators.
-The USB host stays on loopback port 48193. Videonode defaults to localhost:8090.
-Use `--host-url`, `--videonode-url`, `--bind` and `--port` for other addresses.
+The combined service owns USB directly; it does not open a separate host HTTP
+listener on 48193. Videonode defaults to localhost:8090. Use `--videonode-url`,
+`--bind`, `--port` and `--interactions` to override configuration. The `[rig]`
+extra installs the USB host module and pyserial; `[obs]` on the stream PC does
+not require them.
+For a manual run outside systemd, use `--interactions` to select a writable,
+persistent receipt path if `/var/lib/pinrig-host` is not writable by your user.
 
 The booth page accepts up to 240 characters, with fixed title BOOTH and priority
 8. Messages require acknowledgment and remain until a fresh tap or web Clear.
@@ -105,20 +109,26 @@ use the intended trusted LAN/interface and restrict network access accordingly.
 Cross-origin browser writes are rejected; the server does not enable CORS.
 Keep tokens and passwords in installation-specific environment files outside Git.
 
-For automatic startup, install `pinrig-rig.service` alongside `pinrig-host.service`
-using the existing dedicated `pinrig` account and `/opt/pinrig-host` environment.
+For automatic startup, install only `pinrig-rig.service` using the dedicated
+`pinrigdisplay` user/group (in `dialout`) and `/opt/pinrig-rig` environment.
 Create `/etc/pinrig-rig.env`:
 
 ```ini
 PINRIG_RIG=rig1
+PINRIG_SERIAL=/dev/serial/by-id/YOUR_DEVICE
 PINRIG_RIG_BIND=0.0.0.0
 ```
 
 Use `rig2` on the other rig. Add the optional credential/token variables to
 this file when needed. Protect it from other users. Then run
-`systemctl daemon-reload` and `systemctl enable --now pinrig-host pinrig-rig`.
-Inspect `journalctl -u pinrig-rig -f`. The host's existing durable interaction
-store must remain enabled to receive/confirm taps.
+`systemctl daemon-reload` and `systemctl enable --now pinrig-rig`.
+Inspect `journalctl -u pinrig-rig -f`. The service creates and continues using
+`/var/lib/pinrig-host/interactions.sqlite3` for durable tap receipts. On an
+existing two-service installation, stop both services, disable `pinrig-host`,
+copy `PINRIG_SERIAL` into `/etc/pinrig-rig.env`, install the new rig unit and
+start only `pinrig-rig`. Preserve the existing receipt database and transfer
+its directory ownership to `pinrigdisplay:pinrigdisplay`; see the deployment
+guide for the exact migration commands.
 
 ## Run on the Debian stream PC
 
@@ -136,7 +146,7 @@ installs `websocket-client`; the rig and device installations do not need it.
 
 For automatic startup, create `/opt/pinrig-producers` as a virtual environment,
 install protocol and the producer OBS extra there, and install `pinrig-obs.service`.
-Use a dedicated `pinrig` account and `/etc/pinrig-obs.env` containing:
+Use the dedicated `pinrigdisplay` user/group and `/etc/pinrig-obs.env` containing:
 
 ```ini
 PINRIG_RIG1_URL=http://rig1.local:48194

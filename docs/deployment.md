@@ -12,10 +12,11 @@ behavior must be checked on the actual installation before unattended use.
 
 ## Release evidence
 
-- 111 deterministic unit tests pass on CPython 3.14, with no network, hardware
+- 116 deterministic unit tests pass on CPython 3.14, with no network, hardware
   or real sleeps. This includes source routing/freshness, UNKNOWN message
   retention on both devices, touch versus cancellation and the Pico renderer's
-  UNKNOWN card layout.
+  UNKNOWN card layout. The combined service also covers local command
+  deduplication, durable tap confirmations and startup/shutdown resource cleanup.
 - Five simulated minutes of the real host/authority cadence against the Pico
   scheduler pass, including booth messages and cancellations. This protects
   against retry-cache exhaustion at normal publication rates.
@@ -38,8 +39,8 @@ and HTTP host retain their independent 120-second, 512-command windows.
 
 | Machine | Processes | Connections |
 | --- | --- | --- |
-| Rig 1 Armbian PC | videonode, `pinrig-host`, `pinrig-rig --rig rig1` | Own Pico over USB; own videonode on localhost |
-| Rig 2 Armbian PC | videonode, `pinrig-host`, `pinrig-rig --rig rig2` | Own Pico over USB; own videonode on localhost |
+| Rig 1 Armbian PC | videonode, `pinrig-rig --rig rig1` | Own Pico over USB; own videonode on localhost |
+| Rig 2 Armbian PC | videonode, `pinrig-rig --rig rig2` | Own Pico over USB; own videonode on localhost |
 | Debian stream PC | OBS, `pinrig-obs` | Local OBS WebSocket; reports to both rig PCs |
 
 The assembled display is **Pico 2 W / RP2350**, not Pi Zero 2 W. Use
@@ -48,9 +49,11 @@ The assembled display is **Pico 2 W / RP2350**, not Pi Zero 2 W. Use
 for direct-SPI development; do not install it on a Pico or run the old SPI
 service alongside its USB replacement.
 
-Use one state authority and one serial-port owner per rig. `pinrig-host` listens
-on localhost:48193. Each booth/OBS ingress listens on the intended LAN interface
-at port 48194. Videonode defaults to localhost:8090, OBS to localhost:4455.
+One `pinrig-rig` process owns state coalescing, booth/OBS HTTP, USB delivery and
+durable tap receipts on each rig. It calls the host transport module in-process;
+there is no extra HTTP hop or listener on 48193. Its booth/OBS ingress listens
+on the intended LAN interface at port 48194. Videonode defaults to
+localhost:8090, OBS to localhost:4455.
 Allow the stream PC and booth operators to reach 48194 on the trusted event LAN.
 The booth has no login. Do not expose it to the public internet.
 
@@ -72,7 +75,8 @@ this repository does not install or reconfigure it.
 
 ### 1. Update the Pico
 
-Stop `pinrig-rig` and `pinrig-host` on the rig PC before using mpremote. Preserve
+Stop `pinrig-rig` on the rig PC before using mpremote; also stop any legacy
+`pinrig-host` service still running during migration. Preserve
 `interactions.json`; do not erase outstanding acknowledgment receipts. Follow
 the Pico README to generate and copy **all** assets and firmware, copying
 `main.py` last. This release requires four UNKNOWN assets, including
@@ -82,37 +86,53 @@ for this application update.
 
 After reset, check that the device shows the UNKNOWN logo without a rendering
 fault and enumerates at its stable `/dev/serial/by-id/...` path. Close mpremote
-before starting the host. Keep the existing wiring, SPI speed and USB power
+before starting the rig service. Keep the existing wiring, SPI speed and USB power
 arrangement.
 
-### 2. Install the rig host and booth service
+### 2. Install the single rig service
+
+For an existing two-service installation, stop both before replacing the unit
+and disable the old USB owner:
+
+```sh
+sudo systemctl stop pinrig-rig pinrig-host
+sudo systemctl disable pinrig-host
+```
+
+Keep `/etc/pinrig-host.env` for rollback, and copy its `PINRIG_SERIAL` value into
+`/etc/pinrig-rig.env`. The new unit does not read the old environment file.
+Keep `/var/lib/pinrig-host/interactions.sqlite3`: the combined service uses that
+same path, preserving existing durable tap receipts. Transfer its ownership to
+the new `pinrigdisplay` user/group after creating the account below.
 
 Create the dedicated account if it does not already exist:
 
 ```sh
-sudo useradd --system --user-group --home-dir /var/lib/pinrig --shell /usr/sbin/nologin pinrig
-sudo usermod -aG dialout pinrig
-sudo python3 -m venv /opt/pinrig-host
-sudo /opt/pinrig-host/bin/python -m pip install ./pinrig_protocol ./pinrig_host ./pinrig_producers
-sudo install -m 0644 pinrig-host.service pinrig-rig.service /etc/systemd/system/
+sudo useradd --system --user-group --home-dir /var/lib/pinrigdisplay --shell /usr/sbin/nologin pinrigdisplay
+sudo usermod -aG dialout pinrigdisplay
+sudo python3 -m venv /opt/pinrig-rig
+sudo /opt/pinrig-rig/bin/python -m pip install ./pinrig_protocol ./pinrig_host './pinrig_producers[rig]'
+sudo install -m 0644 pinrig-rig.service /etc/systemd/system/
+```
+
+If migrating an existing receipt directory, run this while the old services
+are stopped and after creating `pinrigdisplay`:
+
+```sh
+sudo chown -R pinrigdisplay:pinrigdisplay /var/lib/pinrig-host
 ```
 
 On upgrades, prepare a new virtual environment and keep the old one for
 rollback rather than overwriting the only working installation. The supplied
-units use `/opt/pinrig-host`; switch that path to the prepared environment while
+unit uses `/opt/pinrig-rig`; switch that path to the prepared environment while
 services are stopped, or use a service override pointing to its absolute path.
 
-Create `/etc/pinrig-host.env` with the real device path:
-
-```ini
-PINRIG_SERIAL=/dev/serial/by-id/YOUR_PICO
-PINRIG_BIND=127.0.0.1
-```
-
-Create `/etc/pinrig-rig.env`, using `rig2` on the second PC:
+Create `/etc/pinrig-rig.env` with the real device path, using `rig2` on the
+second PC:
 
 ```ini
 PINRIG_RIG=rig1
+PINRIG_SERIAL=/dev/serial/by-id/YOUR_PICO
 PINRIG_RIG_BIND=0.0.0.0
 ```
 
@@ -122,22 +142,23 @@ value on both rig services and the stream-PC generator. Store credentials in
 these machine-specific files, not in Git or command-line arguments.
 
 ```sh
-sudo chown root:pinrig /etc/pinrig-host.env /etc/pinrig-rig.env
-sudo chmod 0640 /etc/pinrig-host.env /etc/pinrig-rig.env
+sudo chown root:pinrigdisplay /etc/pinrig-rig.env
+sudo chmod 0640 /etc/pinrig-rig.env
 sudo systemctl daemon-reload
-sudo systemctl enable --now pinrig-host pinrig-rig
-sudo systemctl status pinrig-host pinrig-rig
+sudo systemctl enable --now pinrig-rig
+sudo systemctl status pinrig-rig
 ```
 
-The host unit creates `/var/lib/pinrig-host` for its durable receipt database.
+The rig unit grants `dialout` access and creates `/var/lib/pinrig-host` for its
+durable receipt database. The historical directory name is retained deliberately.
 Keep that directory when upgrading or rolling back. `GET /healthz` only proves
 the HTTP process is running. Inspect full status at
 `http://RIG_ADDRESS:48194/api/status` and logs with
-`journalctl -u pinrig-host -u pinrig-rig -f`.
+`journalctl -u pinrig-rig -f`.
 
 ### 3. Install the OBS generator
 
-On the Debian stream PC, create the same dedicated `pinrig` service account if
+On the Debian stream PC, create the same dedicated `pinrigdisplay` user/group if
 needed. Enable OBS's WebSocket v5 server at localhost:4455, then install:
 
 ```sh
@@ -157,7 +178,7 @@ OBS_WEBSOCKET_PASSWORD=YOUR_EXISTING_OBS_WEBSOCKET_PASSWORD
 Add `PINRIG_OBS_TOKEN` if configured on the rigs. Protect the file and start:
 
 ```sh
-sudo chown root:pinrig /etc/pinrig-obs.env
+sudo chown root:pinrigdisplay /etc/pinrig-obs.env
 sudo chmod 0640 /etc/pinrig-obs.env
 sudo systemctl daemon-reload
 sudo systemctl enable --now pinrig-obs
@@ -195,26 +216,31 @@ Record pass/fail and observed behavior for **each** rig:
 6. Unplug/replug USB and restart each service, OBS and the Pico. Verify recovery,
    fresh state after reconnect and no replay of old transient messages. A device
    reboot starts UNKNOWN and does not restore message cards; unconfirmed touch
-   receipts survive. A host restart waits for fresh producer state.
+   receipts survive. A rig-service restart waits for fresh OBS/videonode evidence.
 7. Leave both rigs running for at least 15 minutes with several messages/taps
    and scene/consumer changes. Check for retry-capacity errors, serial timeouts,
    service restarts, render/touch faults and visible corruption. Confirm state
    changes and booth messages remain responsive.
 
 Optional low-level USB smoke test, with an observer at the display: stop
-`pinrig-rig`, clear existing cards and run
+`pinrig-rig`, temporarily run the standalone maintenance host with
+`pinrig-host --serial /dev/serial/by-id/YOUR_PICO --bind 127.0.0.1`, clear
+existing cards and run
 `python tools/usb_smoke.py --url http://127.0.0.1:48193` from an environment
 with the checkout. It deliberately changes signs/messages and checks queueing,
-deduplication, expiry and UNKNOWN retention. Restart `pinrig-rig` afterward.
+deduplication, expiry and UNKNOWN retention. Stop the maintenance host before
+restarting `pinrig-rig`; never run both against the same serial device.
 Use `tools/hardware_smoke.py` only for direct-device HTTP/SPI development.
 These scripts perform real I/O and sleeps and are excluded from unit discovery.
 
 ## Rollback and operating limits
 
-Stop the affected authority and host. Restore the previous environment/service
+Stop the affected rig service. Restore the previous environment/service
 paths and the matching complete Pico code/assets, preserving the host database
-and device outbox. Restart the host, authority and generator and repeat the
-basic state/message checks. Never let mpremote and the host own USB together.
+and device outbox. Restart the rig service and generator and repeat the
+basic state/message checks. When rolling back to the old two-process release,
+restore its rig unit/environment and re-enable its host service together.
+Never let mpremote and a running service own USB together.
 
 If an older firmware predates UNKNOWN message retention or the shorter Pico
 retry window, it restores those older limitations too. A source problem can be

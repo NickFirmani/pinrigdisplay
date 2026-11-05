@@ -4,8 +4,8 @@ After=network.target
 
 [Service]
 Type=simple
-User=pinrig
-Group=pinrig
+User=pinrigdisplay
+Group=pinrigdisplay
 EnvironmentFile=/etc/pinrig-obs.env
 ExecStart=/opt/pinrig-producers/bin/pinrig-obs --rig1 ${PINRIG_RIG1_URL} --rig2 ${PINRIG_RIG2_URL}
 Restart=on-failure

@@ -3,7 +3,7 @@
 Current release assessment: **ready for an attended pilot**, with end-to-end
 acceptance on both Armbian rigs and the Debian stream PC still pending. Start
 with [deployment and acceptance](deployment.md). Local software validation is
-111 passing deterministic tests plus package and Pico asset-build checks;
+116 passing deterministic tests plus package and Pico asset-build checks;
 physical results recorded below belong to their dated revisions.
 
 The README and protocol reference describe current software. The three original
@@ -14,7 +14,7 @@ that the implemented features listed below are still absent.
 | --- | --- |
 | Shared contract / direct SPI / optional device HTTP | Implemented, one handler with boot session and bounded request history. |
 | Signs, message transitions, priority queue, expiry, cancellation, leases | Implemented; deterministic software and image-layout checks. |
-| USB serial framing / separate HTTP host | Implemented; fake serial tests, bounded deadlines/backoff and explicit uncertain delivery. |
+| USB serial delivery | Embedded inside the single `pinrig-rig` service; bounded deadlines/backoff, durable tap receipts and explicit uncertain delivery. Standalone HTTP host remains a maintenance tool. |
 | Packaging and systemd templates | Separate protocol/device/host/producer distributions; installation-specific paths documented. |
 | Producer authority | Explicit, per-rig, fresh observations; conservative resolver, manual selection policy and message filtering. |
 | Live OBS/videonode/booth adapters | Implemented for the agreed two-rig deployment: top-level OBS program scenes plus streaming, videonode SSE consumer counts, per-rig authority and local booth tap/clear page. See [rig producers](rig-producers.md); live deployment validation remains. Twitch and general scene-graph interpretation remain deferred. |
@@ -153,3 +153,21 @@ publication, renewals and booth send/clear without capacity failure. HTTP host
 and Linux-device retry windows remain 120 seconds/512 commands. Current assets
 use 1,838,272 bytes on the review machine, within the 2 MB budget. These changes
 have not been physically deployed or accepted by this review.
+
+## Combined rig service — 5 November 2026
+
+Production now runs one `pinrig-rig` service per rig. State coalescing and USB
+delivery communicate through an in-process client; the host module still owns
+validation, deduplication, freshness-aware renewal, reconnects and durable tap
+receipt confirmation. There is no separate localhost host listener in normal
+operation. The `[rig]` install extra adds USB dependencies; the stream-PC `[obs]`
+install remains independent of them.
+
+The new unit runs as `pinrigdisplay:pinrigdisplay`, with `dialout` access and
+the existing `/var/lib/pinrig-host` receipt directory. Migration disables the
+old host service, copies its serial path into the rig environment file and
+preserves the receipt database while assigning ownership to `pinrigdisplay`. Shutdown
+drains HTTP handlers and source workers before closing USB. The full 116-test
+suite includes local-client uncertain-delivery deduplication, receipt storage,
+listener-startup failure and orderly worker/USB shutdown. Physical acceptance of
+the combined process remains part of the attended deployment checklist.

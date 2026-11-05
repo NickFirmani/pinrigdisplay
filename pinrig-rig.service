@@ -1,14 +1,14 @@
 [Unit]
-Description=Pin rig booth and state authority
-Wants=pinrig-host.service
-After=network.target pinrig-host.service
+Description=Pin rig booth, state authority and USB display service
+After=network.target
 
 [Service]
 Type=simple
-User=pinrig
-Group=pinrig
+User=pinrigdisplay
+Group=pinrigdisplay
+SupplementaryGroups=dialout
 EnvironmentFile=/etc/pinrig-rig.env
-ExecStart=/opt/pinrig-host/bin/pinrig-rig --rig ${PINRIG_RIG} --bind ${PINRIG_RIG_BIND}
+ExecStart=/opt/pinrig-rig/bin/pinrig-rig --rig ${PINRIG_RIG} --serial ${PINRIG_SERIAL} --bind ${PINRIG_RIG_BIND}
 Restart=on-failure
 RestartSec=3
 TimeoutStopSec=30
@@ -16,6 +16,8 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
+StateDirectory=pinrig-host
+StateDirectoryMode=0750
 UMask=0027
 
 [Install]

@@ -4,8 +4,8 @@ After=network.target
 
 [Service]
 Type=simple
-User=pinrig
-Group=pinrig
+User=pinrigdisplay
+Group=pinrigdisplay
 SupplementaryGroups=dialout
 EnvironmentFile=/etc/pinrig-host.env
 ExecStart=/opt/pinrig-host/bin/pinrig-host --serial ${PINRIG_SERIAL} --bind ${PINRIG_BIND}

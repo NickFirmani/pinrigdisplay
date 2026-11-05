@@ -57,6 +57,10 @@ confirmation stops and `interaction_delivery` reports the fault. Export/archive
 and retention management beyond that limit remain operator work; no receipt is
 automatically deleted. The supplied host unit creates the state directory.
 
+In the current deployment this host module runs inside `pinrig-rig`, whose
+single service unit creates the same state directory. Existing receipt data
+stays at the path above when migrating from the old separate host service.
+
 When using direct device HTTP without the host, the caller must durably save
 receipts from `status`, then confirm each interaction ID. Otherwise eight taps
 will fill the outbox by design. A test harness is not a permanently running host.

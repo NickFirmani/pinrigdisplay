@@ -1,7 +1,8 @@
 # Pico 2 W device firmware
 
 This is the MicroPython port for the **Pico 2 W / RP2350**, not the Linux Pi Zero
-2 W. The host remains `pinrig_host` on media-pi (or another Linux rig computer).
+2 W. The rig computer runs one `pinrig-rig` service, embedding the `pinrig_host`
+USB transport module alongside state coalescing and the booth page.
 The existing Linux display service remains available for direct-SPI development.
 
 Pin assignments follow [the soldering pinout](../../hardware/pinouts.md): SPI0
@@ -40,7 +41,7 @@ mpremote connect /dev/serial/by-id/YOUR_PICO fs cp main.py :
 mpremote connect /dev/serial/by-id/YOUR_PICO reset
 ```
 
-Stop the host while using mpremote; only one process may own the serial port.
+Stop `pinrig-rig` while using mpremote; only one process may own the serial port.
 Do not erase `interactions.json` during upgrades. Graphics are generated files
 and are deliberately kept outside Git. The native decoder bounds both input and
 output and rejects truncated/oversized blocks. Artwork and fonts are generated
@@ -48,8 +49,11 @@ from the current Linux renderer; the output is exact RGB565, not an approximatio
 of colors. The graphics budget is 2 MB (initial set approximately 1.72 MB).
 
 The host uses the board's persistent `/dev/serial/by-id/...` name. Start
-`python3 -m pinrig_host.server --serial ...`; use the same HTTP commands as the
-Linux device. The Pico starts UNKNOWN on every reset and requires fresh leases.
+`pinrig-rig --rig rig1 --serial ... --bind 0.0.0.0`;
+see [rig setup](../../docs/rig-producers.md). The standalone
+`python3 -m pinrig_host.server --serial ...` remains an optional maintenance
+tool, used only while the rig service is stopped. The Pico starts UNKNOWN on
+every reset and requires fresh leases.
 
 ## Contract and resource limits
 

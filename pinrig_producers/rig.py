@@ -1,17 +1,18 @@
-"""Per-rig booth website, OBS ingress, videonode adapter and state authority."""
+"""One rig service: booth, source observations, USB delivery and tap receipts."""
 import argparse
 import hmac
 from importlib.resources import files
 import json
 import logging
 import os
+from pathlib import Path
 import signal
 import threading
+import time
 from urllib.parse import urlsplit
 from pinrig_protocol.commands import MAX_FRAME, number
 from pinrig_protocol.http import CODES, HTTPServer, make_handler
 from .authority import Authority, OBS_VALID_FOR
-from .client import Client
 from . import videonode
 
 LOGGER = logging.getLogger(__name__)
@@ -95,48 +96,82 @@ def make_rig_handler(authority, *, token: str = ''):
     return Handler
 
 
-def publish_loop(authority, stop) -> None:
+def run_delivery(authority, host, stop, *, clock=time.monotonic) -> None:
+    """Publish each second and poll USB/receipts between publications."""
+    publish_at = clock()
     while not stop.is_set():
+        if clock() >= publish_at:
+            try:
+                reply = authority.publish()
+                if not reply['ok']:
+                    LOGGER.warning('State delivery failed: %s', reply)
+            except (OSError, ValueError) as error:
+                LOGGER.warning('State delivery unavailable: %s', error)
+            publish_at = clock() + 1
+        host.tick()
+        stop.wait(.5)
+
+
+def run_service(authority, host, stop, *, bind: str, port: int, videonode_url: str,
+                token: str = '', credentials: str = '', server_factory=HTTPServer,
+                thread_factory=threading.Thread) -> None:
+    """Own the listener, workers and USB host, including partial-startup cleanup."""
+    server = None
+    workers = []
+    try:
+        server = server_factory((bind, port), make_rig_handler(authority, token=token))
+        # Drain accepted HTTP work before closing USB, so a late request cannot
+        # reopen the serial connection after shutdown.
+        server.daemon_threads = False
+        workers = [thread_factory(target=server.serve_forever),
+                   thread_factory(target=videonode.run, args=(videonode_url, authority, stop),
+                                  kwargs={'credentials': credentials})]
+        for worker in workers:
+            worker.start()
+        LOGGER.info('%s rig service listening on http://%s:%s', authority.rig, bind, port)
+        run_delivery(authority, host, stop)
+    finally:
+        stop.set()
         try:
-            reply = authority.publish()
-            if not reply['ok']:
-                LOGGER.warning('State delivery failed: %s', reply)
-        except (OSError, ValueError) as error:
-            LOGGER.warning('State delivery unavailable: %s', error)
-        stop.wait(1)
+            if server is not None:
+                if workers and workers[0].ident is not None:
+                    server.shutdown()
+                server.server_close()
+            for worker in workers:
+                if worker.ident is not None:
+                    worker.join()
+        finally:
+            host.close()
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--rig', choices=('rig1', 'rig2'), required=True)
-    parser.add_argument('--host-url', default='http://127.0.0.1:48193')
+    parser.add_argument('--serial', required=True, help='stable /dev/serial/by-id/... device path')
+    parser.add_argument('--interactions', type=Path,
+                        default=Path('/var/lib/pinrig-host/interactions.sqlite3'))
     parser.add_argument('--videonode-url', default='http://127.0.0.1:8090')
     parser.add_argument('--bind', default='127.0.0.1')
     parser.add_argument('--port', type=int, default=48194)
     args = parser.parse_args()
+    # Only rig installs need the host/serial extra; the stream-PC OBS generator
+    # and --help remain usable without it.
+    import serial
+    from pinrig_protocol.interactions import InteractionStore
+    from pinrig_host.client import LocalClient
+    from pinrig_host.delivery import SerialDelivery
+    from pinrig_host.service import Host
     logging.basicConfig(level=logging.INFO)
-    authority = Authority(args.rig, Client(args.host_url, timeout=2))
     stop = threading.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: stop.set())
-    server = HTTPServer((args.bind, args.port), make_rig_handler(
-        authority, token=os.environ.get('PINRIG_OBS_TOKEN', '')))
-    LOGGER.info('%s booth service listening on http://%s:%s', args.rig, args.bind, args.port)
-    workers = [threading.Thread(target=server.serve_forever),
-               threading.Thread(target=publish_loop, args=(authority, stop)),
-               threading.Thread(target=videonode.run, args=(args.videonode_url, authority, stop),
-                   kwargs={'credentials': os.environ.get('VIDEONODE_CREDENTIALS', '')})]
-    try:
-        for worker in workers:
-            worker.start()
-        stop.wait()
-    finally:
-        stop.set()
-        server.shutdown()
-        server.server_close()
-        for worker in workers:
-            if worker.ident is not None:
-                worker.join()
+    host = Host(SerialDelivery(lambda: serial.Serial(
+        args.serial, 115200, timeout=.1, write_timeout=1)),
+        interactions=InteractionStore(args.interactions, capacity=10000))
+    authority = Authority(args.rig, LocalClient(host))
+    run_service(authority, host, stop, bind=args.bind, port=args.port,
+                videonode_url=args.videonode_url, token=os.environ.get('PINRIG_OBS_TOKEN', ''),
+                credentials=os.environ.get('VIDEONODE_CREDENTIALS', ''))
 
 
 if __name__ == '__main__':

@@ -3,6 +3,9 @@
 Deployment update: the two Armbian rig PCs now take the Pi 4B host role, each
 connected to a Pico 2 W over USB. This plan retains the original hardware
 roadmap; use [deployment and acceptance](deployment.md) for the current setup.
+The `pinrig_host` transport now runs inside `pinrig-rig`; production needs one
+rig service, not separate host and authority processes. The standalone HTTP
+host is retained for maintenance and direct-command development.
 
 Implementation tracking: [current status](implementation-status.md) and
 [implemented protocol](protocol.md). The roadmap below includes deferred hardware
