@@ -1,14 +1,13 @@
 [Unit]
-Description=Pin Rig ST7796 display controller
+Description=Pin rig SPI display device
 After=local-fs.target network.target
 
 [Service]
 Type=simple
-User=admin
-Group=admin
-SupplementaryGroups=spi gpio
-WorkingDirectory=/home/admin/Projects/pinrigdisplay
-ExecStart=/usr/bin/python3 -m display_controller.server --config /home/admin/Projects/pinrigdisplay/config.toml
+User=pinrig
+Group=pinrig
+SupplementaryGroups=spi gpio dialout
+ExecStart=/opt/pinrig-device/bin/display-controller --config /etc/pinrig-display.toml
 Restart=on-failure
 RestartSec=3
 TimeoutStopSec=10
@@ -21,8 +20,7 @@ UMask=0027
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=/var/lib/display-controller
+ProtectHome=true
 
 [Install]
 WantedBy=multi-user.target

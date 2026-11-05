@@ -29,6 +29,7 @@ class ST7796:
         gpio: Any | None = None,
         spi: Any | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        bus_lock=None,
     ) -> None:
         if gpio is None:
             import RPi.GPIO as gpio_module
@@ -43,7 +44,7 @@ class ST7796:
         self._reset_pin = reset_pin
         self._madctl = madctl
         self._sleep = sleep
-        self._lock = threading.Lock()
+        self._lock = bus_lock if bus_lock is not None else threading.Lock()
         self._closed = False
 
         try:
@@ -56,6 +57,11 @@ class ST7796:
             spi.max_speed_hz = speed_hz
             spi.bits_per_word = 8
         except Exception as error:
+            try:
+                self.close()
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception('SPI/GPIO cleanup failed after open failure')
             raise DisplayError(f"failed to open SPI/GPIO: {error}") from error
 
     def initialize(self) -> None:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PIL import Image
+from PIL import Image, ImageChops
 
 
 @dataclass(frozen=True)
@@ -23,16 +23,11 @@ class Frame:
 
 def encode_rgb565(image: Image.Image) -> Frame:
     """Encode a Pillow image as big-endian RGB565 pixel data."""
-    rgb = image.convert("RGB")
-    source = rgb.tobytes()
-    output = bytearray(rgb.width * rgb.height * 2)
-    destination = 0
-
-    for position in range(0, len(source), 3):
-        red, green, blue = source[position:position + 3]
-        value = ((red & 0xF8) << 8) | ((green & 0xFC) << 3) | (blue >> 3)
-        output[destination] = value >> 8
-        output[destination + 1] = value & 0xFF
-        destination += 2
-
-    return Frame(rgb.width, rgb.height, bytes(output))
+    red, green, blue = image.convert("RGB").split()
+    # Point tables and channel addition execute in Pillow, avoiding a Python
+    # iteration per pixel. The terms occupy disjoint bits, so addition is exact.
+    high = ImageChops.add(red.point([v & 0xF8 for v in range(256)]),
+                         green.point([v >> 5 for v in range(256)]))
+    low = ImageChops.add(green.point([(v & 0x1C) << 3 for v in range(256)]),
+                        blue.point([v >> 3 for v in range(256)]))
+    return Frame(image.width, image.height, Image.merge("LA", (high, low)).tobytes())

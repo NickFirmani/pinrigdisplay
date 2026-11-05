@@ -76,3 +76,55 @@ class ST7796Tests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class OpenFailureTests(unittest.TestCase):
+    def test_failed_spi_open_releases_spi_and_gpio(self):
+        gpio, spi = FakeGPIO(), FakeSPI()
+        def fail(*args): raise OSError('open failed')
+        spi.open = fail
+        with self.assertRaisesRegex(Exception, 'failed to open'):
+            ST7796(gpio=gpio, spi=spi)
+        self.assertEqual(spi.closed, 1)
+        self.assertEqual(gpio.cleaned, [(24, 25)])
+
+class SharedSPIBusTests(unittest.TestCase):
+    def test_touch_cannot_interleave_window_commands_or_pixel_chunks(self):
+        import threading
+        from display_controller.touch import XPT2046
+        bus = threading.Lock()
+        attempts = []
+        class DisplaySPI(FakeSPI):
+            def writebytes2(self, payload):
+                # Model another bus client trying to run at every write/chunk.
+                acquired = bus.acquire(blocking=False)
+                attempts.append(acquired)
+                if acquired:
+                    bus.release()
+                super().writebytes2(payload)
+        class TouchSPI(FakeSPI):
+            def xfer2(self, payload):
+                if not bus.locked():
+                    raise AssertionError('touch read must own shared bus')
+                value = 600 if payload[0] == 0xB0 else 2800
+                return [0, (value << 3) >> 8, (value << 3) & 255]
+        display = ST7796(gpio=FakeGPIO(), spi=DisplaySPI(), bus_lock=bus, sleep=lambda _: None)
+        touch = XPT2046(TouchSPI(), bus_lock=bus)
+        display.initialize()
+        display.write(Frame(2, 1, b'\0'*4))
+        self.assertTrue(attempts)
+        self.assertFalse(any(attempts))
+        self.assertFalse(bus.locked())
+        self.assertTrue(touch.pressed())
+        self.assertFalse(bus.locked())
+        display.close(); touch.close()
+
+    def test_transfer_failure_releases_shared_bus(self):
+        import threading
+        bus = threading.Lock()
+        spi = FakeSPI()
+        def fail(_): raise OSError('write failed')
+        spi.writebytes2 = fail
+        display = ST7796(gpio=FakeGPIO(), spi=spi, bus_lock=bus)
+        with self.assertRaises(Exception): display.write(Frame(1, 1, b'\0\0'))
+        self.assertFalse(bus.locked())
+        display.close()

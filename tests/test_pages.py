@@ -1,104 +1,94 @@
-from __future__ import annotations
-
-from pathlib import Path
 import unittest
-
-from PIL import Image, ImageDraw, ImageFont
-
-from display_controller.display.pages import (
-    HEIGHT, ON_AIR_REGION, WIDTH, PageRenderer, _wrap,
-)
-from display_controller.models import DisplayRequest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from PIL import Image, ImageDraw, ImageChops
+from display_controller.display.pages import BACKGROUND, PageRenderer, _wrap, _font
 
 
-ROOT = Path(__file__).resolve().parents[1]
+class PageTests(unittest.TestCase):
+    def test_unknown_uses_packaged_logo_and_exact_small_caption(self):
+        pages = PageRenderer()
+        self.assertTrue(pages.logo_path.is_absolute())
+        self.assertTrue(pages.logo_path.is_file())
+        image = pages.compose('unknown', None, 'Host lease expired')
+        self.assertIsNotNone(ImageChops.difference(
+            image.crop((0, 0, 480, 275)), Image.new('RGB', (480, 275), BACKGROUND)
+        ).getbbox())
+        expected = Image.new('RGB', (480, 40), BACKGROUND)
+        draw = ImageDraw.Draw(expected)
+        font = _font(20)
+        caption = 'Stream Status Unknown'
+        left, top, right, bottom = draw.textbbox((0, 0), caption, font=font)
+        draw.text(((480 - (right - left)) // 2 - left,
+                   (32 - (bottom - top)) // 2 - top), caption,
+                  font=font, fill='#f5f1e8')
+        self.assertIsNone(ImageChops.difference(image.crop((0, 280, 480, 320)), expected).getbbox())
 
+    def test_unknown_preserves_logo_aspect_ratio_and_transparency(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / 'logo.png'
+            logo = Image.new('RGBA', (200, 100), (255, 0, 255, 0))
+            ImageDraw.Draw(logo).rectangle((20, 10, 179, 89), fill=(255, 0, 255, 255))
+            logo.save(path)
+            image = PageRenderer(path).compose('unknown', None, '')
+        self.assertEqual(image.getpixel((40, 12)), Image.new('RGB', (1, 1), BACKGROUND).getpixel((0, 0)))
+        points = [(x, y) for y in range(275) for x in range(480)
+                  if image.getpixel((x, y)) == (255, 0, 255)]
+        self.assertTrue(points)
+        xs, ys = zip(*points)
+        self.assertAlmostEqual((max(xs) - min(xs)) / (max(ys) - min(ys)), 2, delta=.03)
+        self.assertAlmostEqual((min(xs) + max(xs)) / 2, 239.5, delta=1)
 
-class PageRendererTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls) -> None:
-        cls.pages = PageRenderer(ROOT / "assets" / "logo.png")
+    def test_unknown_is_static_full_screen_and_does_not_expose_diagnostics(self):
+        pages = PageRenderer()
+        original = pages.compose('unknown', None, 'Waiting', 320, 0)
+        alternate = pages.compose('unknown', None, 'Host lease expired', 320, 10)
+        self.assertEqual(original.tobytes(), alternate.tobytes())
+        alternate.paste('red', (0, 0, 480, 320))
+        self.assertEqual(original.tobytes(), pages.compose('unknown', None, '').tobytes())
 
-    def test_every_page_has_display_dimensions(self) -> None:
-        requests = [
-            DisplayRequest(page="standby"),
-            DisplayRequest(page="on_air"),
-            DisplayRequest(page="camera_active"),
-            DisplayRequest(page="camera_inactive"),
-            DisplayRequest(page="message", title="PLAYER 2",
-                           body="Please approach the machine"),
-        ]
-        for request in requests:
-            with self.subTest(page=request.page):
-                self.assertEqual(self.pages.render(request).size, (WIDTH, HEIGHT))
+    def test_unknown_shows_the_same_message_card_as_known_states(self):
+        pages = PageRenderer()
+        message = {'title': 'BOOTH', 'body': 'Please wait for the next player.'}
+        unknown = pages.compose('unknown', message, 'OBS unavailable', 188)
+        known = pages.compose('on_air', message, '', 188)
+        self.assertEqual(unknown.crop((0, 188, 480, 320)).tobytes(),
+                         known.crop((0, 188, 480, 320)).tobytes())
+        self.assertNotEqual(unknown.tobytes(), pages.compose('unknown', None, '').tobytes())
+        self.assertEqual(unknown.tobytes(),
+                         pages.compose('unknown', message, 'Different diagnostic', 188, 10).tobytes())
 
-    def test_camera_signs_are_steady_and_visually_distinct(self) -> None:
-        images = []
-        for page in ("camera_active", "camera_inactive"):
-            with self.subTest(page=page):
-                request = DisplayRequest(page=page)
-                image = self.pages.render(request)
-                self.assertEqual(image.mode, "RGB")
-                self.assertEqual(image.tobytes(), self.pages.render(request).tobytes())
-                images.append(image)
+    def test_missing_logo_is_reported(self):
+        with TemporaryDirectory() as directory:
+            with self.assertRaises(FileNotFoundError):
+                PageRenderer(Path(directory) / 'missing.png').compose('unknown', None, '')
 
-        # The panel is amber for local use and slate for inactivity.
-        active = images[0].getpixel((60, 160))
-        inactive = images[1].getpixel((60, 160))
-        self.assertGreater(active[0], active[2])
-        self.assertGreater(inactive[2], inactive[0])
-        self.assertNotEqual(images[0].tobytes(), images[1].tobytes())
+    def test_all_states_and_layouts(self):
+        pages = PageRenderer()
+        for state in ('on_air', 'camera_active', 'camera_inactive', 'unknown'):
+            for height in (188, 240, 320):
+                image = pages.compose(state, {'title': 'T'*40, 'body': 'B'*240}, 'Waiting', height, 1.)
+                self.assertEqual(image.size, (480, 320))
+                self.assertEqual(image.mode, 'RGB')
 
-    def test_inactive_sign_has_no_subtitle(self) -> None:
-        image = self.pages.render(DisplayRequest(page="camera_inactive"))
-        subtitle_area = image.crop((60, 218, 420, 246))
-        self.assertFalse(any(min(pixel) > 210 for pixel in subtitle_area.getdata()))
+    def test_housing_animates_but_lettering_is_steady(self):
+        pages = PageRenderer()
+        a, b = pages.on_air(.78), pages.on_air(1.)
+        self.assertNotEqual(a.tobytes(), b.tobytes())
+        letters = [(x,y) for y in range(320) for x in range(480) if a.getpixel((x,y)) == (255,244,204)]
+        self.assertGreater(len(letters), 100)
+        self.assertTrue(all(b.getpixel(p) == (255,244,204) for p in letters))
 
-    def test_inactive_text_is_centered_in_panel(self) -> None:
-        image = self.pages.render(DisplayRequest(page="camera_inactive"))
-        text_pixels = [
-            (x, y)
-            for y in range(HEIGHT)
-            for x in range(WIDTH)
-            if min(image.getpixel((x, y))) > 210
-        ]
-        self.assertTrue(text_pixels)
-        for axis, expected in ((0, WIDTH / 2), (1, HEIGHT / 2)):
-            coordinates = [point[axis] for point in text_pixels]
-            center = (min(coordinates) + max(coordinates)) / 2
-            self.assertAlmostEqual(center, expected, delta=1)
+    def test_all_signs_animate(self):
+        p = PageRenderer()
+        for state in ('on_air', 'camera_active', 'camera_inactive'):
+            self.assertNotEqual(p.compose(state, None, '', 320, 0).tobytes(),
+                                p.compose(state, None, '', 320, 1).tobytes())
 
-    def test_on_air_animation_is_deterministic_and_changes_brightness(self) -> None:
-        first = self.pages.on_air_frames(8)
-        second = self.pages.on_air_frames(8)
-        region_size = (ON_AIR_REGION[2] - ON_AIR_REGION[0],
-                       ON_AIR_REGION[3] - ON_AIR_REGION[1])
-
-        self.assertEqual([frame.size for frame in first], [region_size] * 8)
-        self.assertEqual(first[0].tobytes(), second[0].tobytes())
-        self.assertNotEqual(first[0].tobytes(), first[4].tobytes())
-
-    def test_long_message_renders_without_exceeding_canvas(self) -> None:
-        image = self.pages.message(
-            "A LONG PLAYER TITLE",
-            "This intentionally long message verifies deterministic wrapping "
-            "and truncation within the available message panel area.",
-        )
-        self.assertEqual(image.getbbox(), (0, 0, WIDTH, HEIGHT))
-
-    def test_wrap_splits_unbroken_text_and_marks_truncation(self) -> None:
-        image = Image.new("RGB", (200, 100))
-        draw = ImageDraw.Draw(image)
-        font = ImageFont.truetype(
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 20
-        )
-
-        lines = _wrap(draw, "X" * 100, font, width=80, maximum_lines=3)
-
+    def test_overflow_ellipsized_at_fixed_font_size(self):
+        draw = ImageDraw.Draw(Image.new('RGB', (480,320)))
+        font = _font(22)
+        lines = _wrap(draw, 'X'*240, font, 452, 3)
         self.assertEqual(len(lines), 3)
-        self.assertTrue(lines[-1].endswith("…"))
-        self.assertTrue(all(draw.textlength(line, font=font) <= 80 for line in lines))
-
-
-if __name__ == "__main__":
-    unittest.main()
+        self.assertTrue(lines[-1].endswith('…'))
+        self.assertTrue(all(draw.textlength(line, font=font) <= 452 for line in lines))

@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import math
+from functools import lru_cache
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-from ..models import DisplayRequest
 
 
 WIDTH = 480
@@ -16,10 +16,17 @@ BACKGROUND = "#070f20"
 ON_AIR_REGION = (38, 58, 442, 262)
 
 
+@lru_cache(maxsize=64)
 def _font(size: int, *, bold: bool = False) -> ImageFont.FreeTypeFont:
     filename = "DejaVuSansCondensed-Bold.ttf" if bold else "DejaVuSans.ttf"
     path = Path("/usr/share/fonts/truetype/dejavu") / filename
-    return ImageFont.truetype(str(path), size)
+    fallback = 'Arial Bold.ttf' if bold else 'Arial.ttf'
+    for candidate in (str(path), filename, str(Path('/Library/Fonts') / fallback), str(Path('/System/Library/Fonts/Supplemental') / fallback)):
+        try:
+            return ImageFont.truetype(candidate, size)
+        except OSError:
+            pass
+    raise OSError('Install DejaVu Sans fonts for display rendering')
 
 
 def _fit_font(draw: ImageDraw.ImageDraw, text: str, *, maximum: int,
@@ -91,54 +98,51 @@ def _wrap(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont,
 
 
 class PageRenderer:
-    def __init__(self, logo_path: Path) -> None:
-        self.logo_path = logo_path
+    def __init__(self, logo_path: Path | None = None) -> None:
+        self.logo_path = logo_path if logo_path is not None else Path(__file__).with_name('assets') / 'logo.png'
+        self._unknown_image: Image.Image | None = None
 
-    def render(self, request: DisplayRequest) -> Image.Image:
-        if request.page == "standby":
-            return self.standby()
-        if request.page == "on_air":
-            return self.on_air(0.80)
-        if request.page == "camera_active":
-            return self.camera_status(active=True)
-        if request.page == "camera_inactive":
-            return self.camera_status(active=False)
-        if request.page == "message":
-            assert request.title is not None and request.body is not None
-            return self.message(request.title, request.body)
-        raise ValueError(f"unsupported page: {request.page}")
-
-    def standby(self) -> Image.Image:
-        canvas = Image.new("RGB", (WIDTH, HEIGHT), BACKGROUND)
-        with Image.open(self.logo_path) as source:
-            logo = source.convert("RGBA")
-        logo.thumbnail((368, 288), Image.Resampling.LANCZOS)
-        position = ((WIDTH - logo.width) // 2, (HEIGHT - logo.height) // 2)
-        canvas.paste(logo, position, logo)
+    def compose(self, state: str, message: dict | None, diagnostic: str,
+                sign_height: int = 320, seconds: float = 0.) -> Image.Image:
+        """Fit the entire sign proportionally above a fixed-size plain-text card."""
+        if state == 'unknown':
+            sign = self.unknown_status()
+        else:
+            period = {'on_air': 4, 'camera_active': 3, 'camera_inactive': 6}.get(state, 6)
+            level = .78 + .22 * (1 - math.cos(seconds * 2 * math.pi / period)) / 2
+            if state == 'on_air':
+                sign = self.on_air(level)
+            else:
+                sign = self.camera_status(active=state == 'camera_active', level=level)
+        canvas = Image.new('RGB', (WIDTH, HEIGHT), BACKGROUND)
+        sign.thumbnail((WIDTH, sign_height), Image.Resampling.LANCZOS)
+        canvas.paste(sign, ((WIDTH - sign.width) // 2, (sign_height - sign.height) // 2))
+        if sign_height < HEIGHT:
+            title = (message or {}).get('title', '')
+            body = (message or {}).get('body', '')
+            card = Image.new('RGB', (WIDTH, 132), '#0d1c31')
+            draw = ImageDraw.Draw(card)
+            draw.line((12, 1, 468, 1), fill='#74a29b', width=3)
+            for y, text, size, lines in ((10, title, 24, 1), (45, body, 22, 3)):
+                font = _font(size, bold=y == 10)
+                for line in _wrap(draw, text, font, 452, lines):
+                    draw.text((14, y), line, font=font, fill='#f5f1e8')
+                    y += 26
+            canvas.paste(card, (0, sign_height))
         return canvas
 
-    def message(self, title: str, body: str) -> Image.Image:
-        image = Image.new("RGB", (WIDTH, HEIGHT), BACKGROUND)
-        draw = ImageDraw.Draw(image)
-        draw.rounded_rectangle((18, 18, 462, 302), radius=18,
-                               fill="#0d1c31", outline="#74a29b", width=4)
-        draw.rectangle((34, 91, 446, 96), fill="#e7620b")
-
-        title_font = _fit_font(draw, title.upper(), maximum=54, minimum=28,
-                               width=400)
-        _centered_text(draw, (34, 28, 446, 86), title.upper(),
-                       font=title_font, fill="#fff0b5")
-
-        body_font = _font(34)
-        lines = _wrap(draw, body, body_font, 390, 4)
-        line_height = 43
-        total_height = len(lines) * line_height
-        y = 111 + max(0, (174 - total_height) // 2)
-        for line in lines:
-            _centered_text(draw, (38, y, 442, y + line_height), line,
-                           font=body_font, fill="#f5f1e8")
-            y += line_height
-        return image
+    def unknown_status(self) -> Image.Image:
+        """Show a static LCP logo and status caption, without a message card."""
+        if self._unknown_image is None:
+            canvas = Image.new('RGB', (WIDTH, HEIGHT), BACKGROUND)
+            with Image.open(self.logo_path) as source:
+                logo = source.convert('RGBA')
+            logo.thumbnail((400, 258), Image.Resampling.LANCZOS)
+            canvas.paste(logo, ((WIDTH - logo.width) // 2, 12), logo)
+            _centered_text(ImageDraw.Draw(canvas), (12, 280, 468, 312),
+                           'Stream Status Unknown', font=_font(20), fill='#f5f1e8')
+            self._unknown_image = canvas
+        return self._unknown_image.copy()
 
     def on_air(self, level: float) -> Image.Image:
         image = self._sign_housing(background="#100706", housing="#35100d",
@@ -165,7 +169,7 @@ class PageRenderer:
 
         return image
 
-    def camera_status(self, *, active: bool) -> Image.Image:
+    def camera_status(self, *, active: bool, level: float = 1.) -> Image.Image:
         """Render a steady camera sign in the same housing as ON AIR."""
         if active:
             image = self._sign_housing(background="#100c06", housing="#35250d",
@@ -181,6 +185,8 @@ class PageRenderer:
             title, subtitle = "INACTIVE", ""
 
         draw = ImageDraw.Draw(image)
+        from PIL import ImageColor
+        face = _scale_color(ImageColor.getrgb(face), level)
         self._panel_background(draw, face=face, edge=edge, highlight=highlight,
                                stripe=stripe)
         x0, y0, x1, y1 = ON_AIR_REGION
@@ -200,16 +206,6 @@ class PageRenderer:
                            font=_font(23, bold=True), fill=text)
         return image
 
-    def on_air_frames(self, count: int) -> list[Image.Image]:
-        if count < 2:
-            raise ValueError("animation requires at least two frames")
-        frames = []
-        for index in range(count):
-            phase = 2.0 * math.pi * index / count
-            level = 0.72 + 0.28 * ((1.0 - math.cos(phase)) / 2.0)
-            frames.append(self.on_air(level).crop(ON_AIR_REGION))
-        return frames
-
     @staticmethod
     def _draw_lit_panel(draw: ImageDraw.ImageDraw, level: float) -> None:
         x0, y0, x1, y1 = ON_AIR_REGION
@@ -227,12 +223,12 @@ class PageRenderer:
         _centered_text(draw, shadow_area, "ON AIR", font=title_font,
                        fill="#77170f")
         _centered_text(draw, (x0, y0, x1, y1 - 28), "ON AIR", font=title_font,
-                       fill=_scale_color((255, 244, 204), 0.88 + level * 0.12))
+                       fill=(255, 244, 204))
 
         live_font = _font(19, bold=True)
         _centered_text(draw, (x0, y1 - 42, x1, y1 - 12),
                        "●  LIVE TRANSMISSION  ●", font=live_font,
-                       fill=_scale_color((255, 211, 128), level))
+                       fill=(255, 211, 128))
 
     @staticmethod
     def _panel_background(draw: ImageDraw.ImageDraw, *,

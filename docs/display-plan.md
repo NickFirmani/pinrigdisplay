@@ -1,5 +1,9 @@
 # Display device plan
 
+Implementation tracking: [current status](implementation-status.md) and
+[implemented protocol](protocol.md). The roadmap below includes deferred hardware
+and external-source work.
+
 Updated 30 October 2026. Proposed behavior unless identified as current in the
 [README](../README.md).
 
@@ -43,9 +47,15 @@ instruction from the host, rather than a conclusion drawn on the device.
 | ON AIR | Red sign; housing breathes over four seconds, lettering stays steady. |
 | CAMERA ACTIVE | Amber CAMERA ACTIVE artwork with NOT ON AIR; gentle housing highlight over three seconds. |
 | CAMERA INACTIVE | Slate INACTIVE artwork; gentle housing motion over six seconds. |
-| STATUS UNKNOWN | Neutral UNKNOWN sign with a concise connection/status diagnostic. |
+| STATUS UNKNOWN | Static LCP logo with small centered subtext reading “Stream Status Unknown”. Fills the screen without a message; shrinks above a message card when present. |
 
-The state sign fills the 480 × 320 screen when there is no message. A temporary
+The state sign fills the 480 × 320 screen when there is no message. UNKNOWN
+instead shows the LCP logo from `assets/logo.png`, preserving its transparency
+and aspect ratio on the dark background, with a 20-pixel caption beneath it.
+Bundle the logo with the device package so installed services can render it
+without a source checkout. Keep detailed failure reasons in status responses
+and logs. Do not display a large UNKNOWN sign or a separate diagnostic card.
+A temporary
 message compacts the sign into the top 188 pixels and opens a card in the bottom
 132 pixels. Scale proportionally without cropping. State remains legible and
 updates immediately, including during transitions or message presentation.
@@ -56,7 +66,7 @@ acknowledgment, restore the full-screen sign unless another message is ready.
 Retarget an interrupted transition from its current geometry. Prefer immediate
 layout changes if animation interferes with timely state updates.
 
-Use words as well as color. Target status lettering of at least 40 pixels and
+Use words as well as color. Target normal sign lettering of at least 40 pixels and
 body text around 22 pixels; validate compact layouts at the actual viewing
 distance. Wrap or visibly ellipsize messages rather than shrinking them to fit.
 
@@ -119,9 +129,10 @@ intended network; keep secrets and machine-specific configuration out of Git.
   Use an injected monotonic clock. The host filters notices that are already stale.
 - A requires-ack message remains until acknowledged or explicitly cancelled;
   do not impose a timed expiry on it. Report acceptance separately from human ack.
-- Keep state updates independent of the message queue. UNKNOWN reserves the
-  card area for diagnostics; reject new messages as temporarily unavailable and
-  report existing messages as cancelled when entering UNKNOWN.
+- Keep state updates independent of the message queue. UNKNOWN shows the LCP
+  logo and small “Stream Status Unknown” caption above any visible message.
+  Preserve visible and queued messages and accept new messages, including after
+  state-lease expiry. Retain detailed diagnostics in the status API, not on screen.
 - Bound text lengths and render plain text only. Specify limits and truncation
   responses in the shared models; do not silently change accepted content.
 

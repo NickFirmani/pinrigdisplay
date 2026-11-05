@@ -1,91 +1,75 @@
-from __future__ import annotations
-
-from http.client import HTTPConnection
+"""HTTP handler tests use in-memory streams: no socket, network or timing."""
+import io
+from email.message import Message
 import json
-import threading
 import unittest
-
-from display_controller.api import create_server
-from display_controller.controller import ControllerStatus
-from display_controller.models import DisplayRequest
-
-
-class FakeController:
-    def __init__(self) -> None:
-        self.request = DisplayRequest(page="standby")
-    def status(self) -> ControllerStatus:
-        return ControllerStatus(True, self.request)
-    def set_page(self, request: DisplayRequest) -> ControllerStatus:
-        self.request = request
-        return self.status()
+from pinrig_protocol.http import make_handler
+from display_controller.serial import SerialEndpoint
+from pinrig_protocol.framing import Framer, encode
+from tests.helpers import device, command
 
 
-class ApiTests(unittest.TestCase):
-    def setUp(self) -> None:
-        self.controller = FakeController()
-        self.server = create_server("127.0.0.1", 0, self.controller)  # type: ignore[arg-type]
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
-        self.thread.start()
-        self.connection = HTTPConnection("127.0.0.1", self.server.server_port, timeout=2)
-
-    def tearDown(self) -> None:
-        self.connection.close()
-        self.server.shutdown()
-        self.server.server_close()
-        self.thread.join()
-
-    def request(self, method: str, path: str, body: object | None = None,
-                content_type: str = "application/json") -> tuple[int, dict]:
-        encoded = None if body is None else json.dumps(body)
-        headers = {} if body is None else {"Content-Type": content_type}
-        self.connection.request(method, path, body=encoded, headers=headers)
-        response = self.connection.getresponse()
-        return response.status, json.loads(response.read())
-
-    def test_put_and_get_display(self) -> None:
-        status, body = self.request("PUT", "/api/display", {
-            "page": "message", "title": "PLAYER 2", "body": "Please approach",
-        })
-        self.assertEqual(status, 200)
-        self.assertEqual(body["page"], "message")
-
-        status, body = self.request("GET", "/api/display")
-        self.assertEqual(status, 200)
-        self.assertEqual(body, {
-            "page": "message", "title": "PLAYER 2",
-            "body": "Please approach", "healthy": True,
-        })
-
-    def test_health_endpoint(self) -> None:
-        status, body = self.request("GET", "/healthz")
-        self.assertEqual(status, 200)
-        self.assertEqual(body, {"status": "ok", "page": "standby"})
-
-    def test_camera_pages_can_be_selected_and_read_back(self) -> None:
-        for page in ("camera_active", "camera_inactive"):
-            with self.subTest(page=page):
-                status, body = self.request("PUT", "/api/display", {"page": page})
-                self.assertEqual(status, 200)
-                self.assertEqual(body["page"], page)
-                status, body = self.request("GET", "/api/display")
-                self.assertEqual(status, 200)
-                self.assertEqual(body, {"page": page, "healthy": True})
-
-    def test_invalid_requests_have_structured_errors(self) -> None:
-        status, body = self.request("PUT", "/api/display", {"page": "missing"})
-        self.assertEqual(status, 422)
-        self.assertEqual(body["error"]["code"], "invalid_request")
-
-        status, body = self.request("PUT", "/api/display", {"page": "standby"},
-                                    content_type="text/plain")
-        self.assertEqual(status, 415)
-        self.assertEqual(body["error"]["code"], "unsupported_media_type")
-
-    def test_unknown_route_returns_404(self) -> None:
-        status, body = self.request("GET", "/missing")
-        self.assertEqual(status, 404)
-        self.assertEqual(body["error"]["code"], "not_found")
+def http(endpoint, value=None, *, raw=None, length=None):
+    raw = json.dumps(value).encode() if raw is None else raw
+    cls = make_handler(endpoint)
+    h = object.__new__(cls)
+    h.path = '/api/commands'
+    h.headers = Message()
+    h.headers['Content-Type'] = 'application/json'
+    h.headers['Content-Length'] = str(len(raw) if length is None else length)
+    h.rfile = io.BytesIO(raw); h.wfile = io.BytesIO()
+    codes = []
+    h.send_response = codes.append
+    h.send_header = lambda *args: None
+    h.end_headers = lambda: None
+    h.do_POST()
+    return codes[0], json.loads(h.wfile.getvalue())
 
 
-if __name__ == "__main__":
-    unittest.main()
+class APITests(unittest.TestCase):
+    def test_local_http_serial_parity(self):
+        controllers = [device()[0] for _ in range(3)]
+        for request in [command('hello'), command('set_state', state='on_air'),
+                        command('show_message', 'msg', title='T', body='B'),
+                        command('show_message', 'msg', title='T', body='B'),
+                        command('cancel_message', 'cancel', message_id='msg'), command('status')]:
+            local = controllers[0].handle(request)
+            code, reply = http(controllers[1], request)
+            serial = json.loads(SerialEndpoint(controllers[2]).feed(encode(request)))
+            self.assertEqual(code, 200)
+            self.assertEqual(local, reply)
+            self.assertEqual(local, serial)
+
+    def test_bad_http_and_bounded_body(self):
+        c = device()[0]
+        self.assertEqual(http(c, raw=b'{')[0], 400)
+        self.assertEqual(http(c, raw=b'{}', length=8193)[0], 413)
+        self.assertEqual(http(c, raw=b'{}', length=8)[0], 400)
+        self.assertEqual(http(c, command('bad'))[0], 422)
+
+    def test_partial_utf8_and_multiple_frames(self):
+        f = Framer(); data = encode(command('show_message', title='é', body='B'))
+        results = []
+        for byte in data: results += f.feed(bytes([byte]))
+        self.assertEqual(results, [command('show_message', title='é', body='B')])
+        self.assertEqual(len(f.feed(data + data)), 2)
+
+    def test_recovers_after_bad_and_oversized_frames(self):
+        f = Framer()
+        self.assertEqual(f.feed(b'x'*9000), [])
+        self.assertEqual(len(f.buffer), 0)
+        results = f.feed(b'ignored\n\xff\n[]\n' + encode(command('hello')))
+        self.assertEqual([r['error']['code'] for r in results[:3]], ['invalid_frame'] * 3)
+        self.assertEqual(results[3]['operation'], 'hello')
+
+    def test_untrusted_error_field_does_not_bypass_validation(self):
+        c = device()[0]; endpoint = SerialEndpoint(c)
+        for value in ({'error': None}, {'error': {'code': 'invalid_frame'}, 'request_id': 'malicious'}):
+            reply = json.loads(endpoint.feed(encode(value)))
+            self.assertEqual(reply['error']['code'], 'invalid_request')
+
+    def test_deeply_nested_json_is_rejected_and_recovers(self):
+        f = Framer()
+        results = f.feed(b'['*1200 + b']'*1200 + b'\n' + encode(command('hello')))
+        self.assertEqual(results[0]['error']['code'], 'invalid_frame')
+        self.assertEqual(results[1]['operation'], 'hello')
