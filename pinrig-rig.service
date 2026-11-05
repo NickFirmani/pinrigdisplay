@@ -1,0 +1,22 @@
+[Unit]
+Description=Pin rig booth and state authority
+Wants=pinrig-host.service
+After=network.target pinrig-host.service
+
+[Service]
+Type=simple
+User=pinrig
+Group=pinrig
+EnvironmentFile=/etc/pinrig-rig.env
+ExecStart=/opt/pinrig-host/bin/pinrig-rig --rig ${PINRIG_RIG} --bind ${PINRIG_RIG_BIND}
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

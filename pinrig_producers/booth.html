@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rig booth</title>
+<style>
+  :root { color-scheme: dark; font: 16px/1.5 system-ui,sans-serif; background: #11171d; color: #edf2f6 }
+  * { box-sizing: border-box }
+  main { max-width: 640px; margin: 5vh auto; padding: 24px }
+  h1 { margin: 0; font-size: 2rem } h2 { font-size: 1.1rem }
+  .muted { color: #a8b6c4 } section { margin-top: 24px; padding: 24px; border: 1px solid #34414d; border-radius: 12px; background: #19222b }
+  #state { display: inline-block; font-weight: 700; letter-spacing: .08em; padding: 5px 12px; background: #303f4e; border-radius: 5px }
+  label { display: block; font-weight: 600; margin-bottom: 8px }
+  textarea { width: 100%; resize: vertical; min-height: 130px; border: 1px solid #657789; border-radius: 6px; padding: 12px; background: #101820; color: inherit; font: inherit }
+  textarea:focus, button:focus-visible { outline: 3px solid #76c8ff; outline-offset: 3px }
+  button { margin-top: 12px; padding: 10px 18px; border: 0; border-radius: 6px; background: #9bd5ff; color: #10202c; font: inherit; font-weight: 600; cursor: pointer }
+  button:disabled { opacity: .5; cursor: default } .clear { background: #344553; color: #edf2f6; margin: 0 0 0 12px }
+  #result { white-space: pre-wrap; overflow-wrap: anywhere } ul { padding: 0; list-style: none } li { padding: 12px 0; border-top: 1px solid #34414d; overflow-wrap: anywhere }
+</style>
+<main>
+  <p class="muted">BOOTH CONTROL</p>
+  <h1 id="rig">Rig booth</h1>
+  <p id="state">UNKNOWN</p>
+  <p id="connection" class="muted" role="status">Connecting…</p>
+  <section>
+    <form id="form">
+      <label for="body">Message to the rig</label>
+      <textarea id="body" maxlength="240" required placeholder="Your booth message…"></textarea>
+      <p class="muted">Stays until tapped or cleared here, including while status is UNKNOWN.</p>
+      <button id="send">Send message</button>
+    </form>
+    <p id="result" role="status" aria-live="polite"></p>
+  </section>
+  <section>
+    <h2>Message status</h2>
+    <p class="muted">Clearing a message cancels it. A tap is reported separately as acknowledged.</p>
+    <ul id="messages"><li>No booth messages.</li></ul>
+  </section>
+</main>
+<script>
+  const el = id => document.getElementById(id);
+  const labels = {on_air:'ON AIR',camera_active:'ACTIVE',camera_inactive:'INACTIVE',unknown:'UNKNOWN'};
+  const terminal = new Set(['acknowledged','dismissed','cancelled','expired','dropped','rejected']);
+  let busy = false;
+  let messageSignature = '';
+  let accepted = false;
+  let attempted = sessionStorage.getItem('booth-attempt');
+  async function api(path, value) {
+    const response = await fetch(path, {
+      method: value === undefined ? 'GET' : 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: value === undefined ? undefined : JSON.stringify(value),
+      signal: AbortSignal.timeout(6000)
+    });
+    const data = await response.json();
+    if (!response.ok || data.ok === false) {
+      const reason = typeof data.error === 'string' ? data.error : data.error?.message;
+      const error = new Error(reason || 'Request failed');
+      error.definite = (response.status >= 400 && response.status < 500) ||
+        data.device_accepted === false || (data.ok === false && data.error?.code !== 'delivery_uncertain');
+      throw error;
+    }
+    return data;
+  }
+  async function clearMessage(id) {
+    if (busy) return;
+    busy = true;
+    el('send').disabled = true;
+    try {
+      const reply = await api('/api/clear', {message_id:id});
+      el('result').textContent = reply.result.status === 'cancelled' ?
+        'Message cleared (cancelled).' : 'Message already ended: ' + reply.result.status;
+      if (attempted === id) { attempted = null; sessionStorage.removeItem('booth-attempt'); }
+    } catch (error) { el('result').textContent = 'Clear was not confirmed: ' + error.message; }
+    finally { busy = false; el('send').disabled = false; await refresh(); }
+  }
+  async function refresh() {
+    try {
+      const data = await api('/api/status');
+      el('rig').textContent = data.rig === 'rig1' ? 'Rig 1' : 'Rig 2';
+      document.title = el('rig').textContent + ' · Booth';
+      el('state').textContent = labels[data.state] || 'UNKNOWN';
+      if (!data.host.ok) throw new Error(data.host.error?.message || 'Host unavailable');
+      const host = data.host.result;
+      const device = host.device || {};
+      const problems = [];
+      if (!host.connected) problems.push('USB display disconnected');
+      if (host.delivery_fault) problems.push(host.delivery_fault);
+      if (device.display_fault) problems.push('Display: ' + device.display_fault);
+      if (device.touch_fault) problems.push('Touch: ' + device.touch_fault);
+      if (host.interaction_delivery && host.interaction_delivery !== 'ready') problems.push('Tap receipt: ' + host.interaction_delivery);
+      if (!device.acknowledgment_available) problems.push('Tap acknowledgment unavailable');
+      if (data.state_delivery?.ok === false) problems.push('State delivery has not succeeded');
+      el('connection').textContent = (problems.length ? problems.join(' · ') : 'Display connected') + ' · ' + data.reason;
+      const statuses = new Map(Object.entries(device.recent_messages || {}));
+      for (const id of device.pending || []) statuses.set(id, 'queued');
+      if (device.visible_message) statuses.set(device.visible_message.message_id, device.visible_message.status);
+      if (attempted && terminal.has(statuses.get(attempted))) {
+        attempted = null; sessionStorage.removeItem('booth-attempt');
+      }
+      if (attempted && !statuses.has(attempted)) statuses.set(attempted,
+        accepted ? 'awaiting display status' : 'delivery unconfirmed');
+      const signature = JSON.stringify(Array.from(statuses).filter(([id]) => id.startsWith('booth-')));
+      // Preserve keyboard focus on Clear while the unchanged status is polled.
+      if (signature === messageSignature) return;
+      messageSignature = signature;
+      const list = el('messages'); list.replaceChildren();
+      for (const [id, status] of statuses) {
+        if (!id.startsWith('booth-')) continue;
+        const row = document.createElement('li');
+        row.textContent = status + ' · ' + id.slice(6,14);
+        if (!terminal.has(status)) {
+          const button = document.createElement('button');
+          button.className = 'clear'; button.textContent = 'Clear';
+          button.onclick = () => clearMessage(id); row.append(button);
+        }
+        list.append(row);
+      }
+      if (!list.childElementCount) { const row = document.createElement('li'); row.textContent = 'No booth messages.'; list.append(row); }
+    } catch (error) { el('connection').textContent = 'Status unavailable: ' + error.message; }
+  }
+  el('form').onsubmit = async event => {
+    event.preventDefault();
+    if (busy || !el('body').value.trim()) return;
+    busy = true; el('send').disabled = true;
+    // Keep the ID even if the HTTP result is lost: status/clear can still find it.
+    attempted = 'booth-' + Array.from(crypto.getRandomValues(new Uint8Array(16)),
+      value => value.toString(16).padStart(2, '0')).join('');
+    accepted = false;
+    sessionStorage.setItem('booth-attempt', attempted);
+    try {
+      await api('/api/messages', {body:el('body').value, request_id:attempted});
+      accepted = true;
+      el('result').textContent = 'Accepted by the display. Waiting for display/tap status below.';
+      el('body').value = '';
+    } catch (error) {
+      if (error.definite) {
+        attempted = null; sessionStorage.removeItem('booth-attempt');
+        el('result').textContent = 'Message rejected: ' + error.message;
+      } else {
+        el('result').textContent = 'Delivery was not confirmed: ' + error.message + '. Check status or clear this attempt before sending again.';
+      }
+    } finally { busy = false; el('send').disabled = false; await refresh(); }
+  };
+  async function poll() { await refresh(); setTimeout(poll, 2000); }
+  poll();
+</script>
+</html>

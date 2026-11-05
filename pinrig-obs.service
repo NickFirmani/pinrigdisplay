@@ -1,0 +1,21 @@
+[Unit]
+Description=Pin rig OBS state generator
+After=network.target
+
+[Service]
+Type=simple
+User=pinrig
+Group=pinrig
+EnvironmentFile=/etc/pinrig-obs.env
+ExecStart=/opt/pinrig-producers/bin/pinrig-obs --rig1 ${PINRIG_RIG1_URL} --rig2 ${PINRIG_RIG2_URL}
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=15
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target
