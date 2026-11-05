@@ -1,68 +1,124 @@
-# Pin Rig Display Controller
+# Pin Rig Display
 
-Python software for a 480 × 320 Elecrow ST7796 display. We are currently
-validating the UI, artwork, animation, and overall feel with the display wired
-directly to a Raspberry Pi 4B over SPI.
+The first assembled USB unit is a **Pico 2 W (RP2350)**. Its MicroPython firmware,
+build/deployment steps and resource limits are in [firmware/pico](firmware/pico/README.md).
+The Linux application below remains the direct-SPI / Pi Zero development path;
+it is not the executable installed on the Pico. Both use the same protocol v1
+command validator and the same HTTP host. Pico wiring is documented in
+[hardware/pinouts.md](hardware/pinouts.md).
 
-The intended setup separates a small display device from its host:
+Python 3.11+ software for the 480 × 320 Elecrow ST7796 display:
 
 ```text
-Other event producers → Pi 4B HTTP host → USB serial → Pi Zero 2 W → SPI display
+OBS on stream PC → rig PC authority → local HTTP/USB host → Pico 2 W → SPI display
 ```
 
-The Pi Zero 2 W will mount behind the display when it arrives. The 4B will remain
-the host: it accepts events from others and sends explicit display commands.
-The display device only needs to produce state signs, render generic messages,
-and report command results and interactions. OBS, Twitch, game detection, and
-player-selection rules belong outside the device package.
+Direct-SPI development on the 4B runs the same device command handler over HTTP.
+Production producer deployment uses one Armbian tiny PC per rig as the HTTP/USB
+host and one Debian stream PC for OBS. See [rig producers and booth setup](docs/rig-producers.md).
+Start with the [deployment and acceptance guide](docs/deployment.md): the current
+release is ready for an attended pilot, with end-to-end event acceptance still
+required on both rigs.
+The legacy page API and last-page restoration have been removed. Every device
+boot starts UNKNOWN; current state must arrive and its lease must be renewed.
 
-## Plans
+## Implemented
 
-- [Display plan](docs/display-plan.md): UI, shared command contract, device behavior,
-  and the move from direct SPI on the 4B to the Zero 2 W.
-- [Host plan](docs/host-plan.md): the 4B HTTP service, USB delivery, and monitoring.
-- [Event producer plan](docs/event-producer-plan.md): OBS and other integrations
-  that decide what to tell the host.
+- Protocol v1 shared by local calls, HTTP and newline-delimited USB serial:
+  strict validation, boot sessions, bounded deduplication and correlated results.
+- ON AIR, CAMERA ACTIVE and CAMERA INACTIVE signs, plus an LCP logo with small
+  “Stream Status Unknown” subtext for the `unknown` state; proportional
+  500 ms message transitions, steady lettering and subtle sign animation.
+- One visible/three pending messages, priority preemption, FIFO ties,
+  transition-aware expiry, cancellation and explicit message outcomes.
+- Independently installable HTTP host with serial delivery, bounded reconnect,
+  freshness-aware lease renewal and explicit uncertain-delivery reporting.
+- Separate producer observation policy and HTTP client, per-rig routing,
+  freshness, manual selection precedence and stale/unmoderated notice filtering.
+- Per-rig state authority, local videonode consumer adapter and booth page;
+  a separate OBS generator reports streaming/program-scene state to both rigs.
+- Deterministic tests and a hardware-free layout preview command.
 
-These describe planned work. USB serial, the generic message queue, touch
-acknowledgment, and the host/producer split are not implemented yet. During
-local SPI development, the command contract should mirror the future USB API
-so the same scenarios can exercise both setups. Optional HTTP over Wi-Fi on
-the device will use that same command handler.
+The [protocol reference](docs/protocol.md) specifies the implemented contract.
+The original [display](docs/display-plan.md), [host](docs/host-plan.md) and
+[producer](docs/event-producer-plan.md) plans retain their hardware/integration
+roadmaps. See [implementation status](docs/implementation-status.md) for remaining
+physical validation and deliberately deferred source/touch integrations.
 
-## Current HTTP API
+## Installation and development
 
-The existing service runs on the SPI-connected 4B, listens on port `48193`, and
-restores its last successfully displayed page after restart. It has no
-authentication; use it only on a trusted network. Replace `localhost` with the
-4B's hostname when calling from another computer.
+Use a virtual environment. From this repository:
 
 ```sh
-curl -X PUT http://localhost:48193/api/display \
-  -H 'Content-Type: application/json' \
-  -d '{"page":"on_air"}'
-
-curl http://localhost:48193/api/display
-curl http://localhost:48193/healthz
+python3 -m venv .venv
+. .venv/bin/activate
+# Device only: shared protocol + Pillow, no host/producer clients.
+python -m pip install ./pinrig_protocol .
+# On the SPI-connected Pi, add hardware drivers (and serial for a Zero gadget).
+python -m pip install '.[hardware,serial]'
+python -m unittest discover -v
+python -m display_controller.preview --output /tmp/pinrig-layouts.png
+python -m display_controller.server --config config.toml
 ```
 
-| Page | Current behavior |
-| --- | --- |
-| `standby` | Lyons Classic Pinball logo on `#070f20`. |
-| `on_air` | Red ON AIR sign with a slow four-second pulse. |
-| `camera_active` | Amber CAMERA ACTIVE sign with NOT ON AIR below. |
-| `camera_inactive` | Slate INACTIVE sign. |
-| `message` | Message page requiring `title` (up to 40 characters) and `body` (up to 240 characters). |
+Install DejaVu Sans fonts on the Pi (`fonts-dejavu-core` on Raspberry Pi OS).
+A macOS Arial fallback supports local visual checks; actual Pi typography should
+be checked using DejaVu. Hardware imports occur only when creating the SPI adapter.
+
+Separate host and producer installations:
 
 ```sh
-curl -X PUT http://localhost:48193/api/display \
-  -H 'Content-Type: application/json' \
-  -d '{"page":"message","title":"Test message","body":"Check the display from across the room."}'
+# Host: no Pillow or SPI/GPIO dependencies.
+python -m pip install ./pinrig_protocol ./pinrig_host
+pinrig-host --serial /dev/serial/by-id/YOUR_DEVICE --bind 127.0.0.1
+# Optional producer authority/client, on its own machine/environment:
+python -m pip install ./pinrig_protocol ./pinrig_producers
 ```
 
-Successful updates return HTTP 200. Invalid requests return 4xx JSON errors;
-display failures return HTTP 503. The current message page does not implement
-the planned temporary card, duration, priority, or acknowledgment behavior.
+Each directory has its own distribution metadata. Build/install the shared
+protocol alongside the chosen package; it is not assumed to be on PyPI. The
+source checkout allows the full unit suite to import all packages without
+installing host-only serial dependencies. Tests never open network/hardware or sleep.
+
+## Send explicit commands
+
+The default listener is loopback port `48193`. The service has no authentication;
+configure a deliberate bind address and network access for intended callers.
+Both device and host expose `POST /api/commands` and `GET /healthz`.
+
+```sh
+curl http://localhost:48193/api/commands -H 'Content-Type: application/json' \
+  -d '{"version":1,"request_id":"hello-1","operation":"hello"}'
+```
+
+Copy `result.session` into the next command:
+
+```sh
+curl http://localhost:48193/api/commands -H 'Content-Type: application/json' \
+  -d '{"version":1,"session":"SESSION_FROM_HELLO","request_id":"state-1","operation":"set_state","params":{"state":"on_air","lease_seconds":15,"valid_for":30}}'
+```
+
+For synthetic UI scenarios, the included producer client handles the handshake:
+
+```python
+from pinrig_producers.client import Client
+client = Client("http://localhost:48193")
+client.send("set_state", {"state": "on_air", "lease_seconds": 60, "valid_for": 60})
+client.send("show_message", {
+    "title": "PLAYER READY", "body": "Please approach the machine.",
+    "duration": 8, "priority": 2,
+})
+print(client.send("status", {}))
+```
+
+Use `camera_active`, `camera_inactive` and `unknown` to exercise the other signs.
+The unknown view shows the logo and caption, shrinking above messages when
+present. Unknown state and lease expiry preserve messages; diagnostic details
+remain in status responses rather than a display card.
+On direct device HTTP, issue a fresh state command before its lease expires.
+With verified XPT2046 wiring, enable `touch_enabled = true`. Requires-ack
+messages then remain until a fresh press/release anywhere on the screen.
+See [touch operation](docs/touch.md) for receipt storage and failure behavior.
 
 ## Current SPI wiring on the Pi 4B
 
@@ -76,40 +132,36 @@ the planned temporary card, duration, priority, or acknowledgment behavior.
 | SDI (MOSI) | 19 | GPIO10 / SPI0 MOSI |
 | SCK | 23 | GPIO11 / SPI0 SCLK |
 | LED | 17 | 3.3 V |
+| SDO (MISO) | 21 | GPIO9 / SPI0 MISO |
+| T_CLK | 23 | GPIO11 / SPI0 SCLK (shared) |
+| T_CS | 26 | GPIO7 / SPI0 CE1 |
+| T_DIN | 19 | GPIO10 / SPI0 MOSI (shared) |
+| T_DO | 21 | GPIO9 / SPI0 MISO (shared) |
+| T_IRQ | 16 | GPIO23 (connected; polling adapter does not claim it) |
 
-The display is write-only with this wiring. Do not drive the backlight directly
+MISO and touch wiring were supplied by the operator and touch SPI responses
+were verified on the 4B. The LCD driver still only writes display data. Do not drive the backlight directly
 from a GPIO. Confirm and document the Zero 2 W mounting, wiring, and USB power
 arrangement before moving the display; this table documents the current setup.
-Touch wiring and support have not been established.
+Touch uses pressure polling on CE1 at 100 kHz; the LCD remains on CE0.
 
-## Development
+## Deployment
 
-Use Python 3.11 or later. The target Pi needs Pillow and the SPI/GPIO libraries
-(`spidev` and a compatible `RPi.GPIO` provider; the hardware extra uses
-`rpi-lgpio`). Keep hardware dependencies at the edge so unit tests can run
-without a Pi or display.
+The device unit expects `/opt/pinrig-device/bin/display-controller` and
+`/etc/pinrig-display.toml`. The host unit expects `/opt/pinrig-host/bin/pinrig-host`
+and `/etc/pinrig-host.env`, containing `PINRIG_SERIAL=/dev/serial/by-id/...` and
+`PINRIG_BIND=127.0.0.1` (or the intended interface). Create a dedicated `pinrig`
+service account and grant only the groups required by that machine: `spi`,
+`gpio`, and/or `dialout`. Create the respective virtual environments at those
+paths and install the relevant packages. Copy/edit configuration outside Git.
 
-```sh
-python3 -m unittest discover -v
-python3 -m display_controller.server --config config.toml
-```
+Install the appropriate unit, then run `systemctl daemon-reload` and
+`systemctl enable --now display-controller` or `pinrig-host`. Inspect logs with
+`journalctl -u display-controller -f` or `journalctl -u pinrig-host -f`.
 
-Configuration includes the HTTP bind address, SPI/GPIO settings, animation rate,
-logo path, and persisted-state path. Relative paths resolve from the
-configuration file's directory. Review paths and permissions for the target
-machine before starting the service.
-
-## Current systemd service
-
-The supplied unit expects this repository at
-`/home/admin/Projects/pinrigdisplay` and runs as `admin` with access to the
-`spi` and `gpio` groups. This is the current direct-SPI display service;
-a separate host service is planned.
-
-```sh
-sudo install -m 0644 display-controller.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now display-controller.service
-systemctl status display-controller.service
-journalctl -u display-controller.service -f
-```
+The Zero must expose an OS-configured USB serial gadget (`/dev/ttyGS0` on the
+device, stable `/dev/serial/by-id/...` on the host). Set `serial_path` in device
+configuration; HTTP may be enabled simultaneously or disabled. This code does
+not change boot firmware, USB gadget configuration, wiring, power, or GPIO
+assignments. Confirm the Zero mounting, data-port cable and power ownership
+before connecting hardware. The touch wiring above has been exercised on the 4B; the Zero move still needs validation.
