@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pinrig-protocol"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.setuptools]
+include-package-data = false
+packages = ["pinrig_protocol"]
+package-dir = {"pinrig_protocol" = "."}

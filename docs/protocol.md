@@ -1,0 +1,105 @@
+# Command protocol v1
+
+HTTP: `POST /api/commands`, `Content-Type: application/json`. USB: UTF-8 JSON
+followed by newline, 115200 baud. Both accept the same envelope and return the
+same result fields. Frames and HTTP bodies are limited to 8192 bytes (excluding
+the serial newline). Overflow discards through the next newline. Invalid UTF-8,
+JSON, versions, operations and fields receive explicit errors.
+
+```json
+{"version":1,"request_id":"unique-id","operation":"hello","params":{}}
+```
+
+First call `hello` and retain its `result.session`. Include `session` in every
+mutating command. A device or host restart creates a new session, starts UNKNOWN,
+and rejects commands addressed to the previous session. `hello` and `status`
+need no session. Request IDs are 1–64 ASCII letters, digits, or `_.:-`. Use
+unique IDs (UUIDs are suitable), including for lease renewals.
+
+```json
+{"version":1,"session":"SESSION_FROM_HELLO","request_id":"state-1","operation":"set_state","params":{"state":"on_air","lease_seconds":15,"valid_for":30}}
+```
+
+| Operation | Parameters |
+| --- | --- |
+| `hello` | None. Returns session, retry window/capacity, acknowledgment capability. |
+| `set_state` | `state`: `on_air`, `camera_active`, `camera_inactive`, `unknown`; `lease_seconds`: 1–60, default 15; `valid_for`: 1–300, default 30; `diagnostic`: up to 120 characters. |
+| `show_message` | `title`: 1–40 characters; `body`: 1–240; `duration`: 1–300 seconds, default 8; `priority`: integer 0–9, default 0; `requires_ack`: boolean, default false. |
+| `cancel_message` | `message_id`, returned by `show_message` (the original request ID). |
+| `status` | None. Reports requested/displayed state and revisions, faults, visible/pending/recent message outcomes and touch capability/faults. Host wraps device status with connectivity/freshness information. |
+| `confirm_interaction` | `interaction_id`. Idempotently removes a durably received device outbox entry; rejects when touch storage is disabled. |
+
+Text is plain text, retained verbatim. Empty/whitespace-only text and control
+characters other than tab/newline are rejected. Overlong content is rejected,
+never silently shortened. Layout overflow is visibly ellipsized; message
+acceptance returns this text policy. No markup or terminal escapes are rendered.
+
+Success envelopes contain `version`, `request_id`, `ok: true`, and `result`.
+Errors contain `ok: false` and `error: {code, message}`. Unparseable framing has a
+null request ID. Mutations distinguish `accepted` from `display_success` and
+`display_fault`. Accepted rendering failures remain accepted, are reported, and
+are retried by the render loop. Query status for the current outcome; a cached
+acceptance response is a snapshot, not an ongoing delivery receipt.
+
+## Retry and reconnect contract
+
+The Linux device and HTTP host retain up to 512 mutation responses for
+**120 seconds** from first receipt. The Pico device retains 64 for **15 seconds**;
+`hello` advertises each endpoint's actual limits. Within that window, the same normalized command/request ID
+returns the original response without repeating side effects. Reusing an ID
+with different content returns `request_conflict`. Entries are not evicted early;
+a full window rejects new work with `retry_capacity`. Read-only hello/status
+requests are not cached. Clients must not retry an old transient request after
+the endpoint's advertised retry window or across session changes; allocate
+globally unique IDs for new work. Host and device windows are independent.
+
+The serial host has one sender, a two-second response deadline and bounded
+1–30 second reconnect backoff. It does not automatically replay messages after
+uncertain delivery. The HTTP response explicitly reports `delivery_uncertain`,
+`device_accepted: null`, and `message_replay: false`; the original message may
+already be on the display. Retrying the HTTP request returns that cached outcome.
+After connectivity returns, query device status by original message ID. Device
+history retains the last 32 terminal message outcomes on Linux or 16 on Pico,
+so it is not an audit log.
+
+The host keeps the latest desired state even when disconnected, explicitly
+resends it after reconnect, and never queues transient messages for reconnect.
+Its HTTP session is independent of the device session. Host restart intentionally
+forgets desired state. Producers must submit fresh state again.
+
+## Ownership and freshness
+
+One producer-side authority per rig owns resolved state. The host accepts the
+latest command; it does not arbitrate competing sources. `valid_for` tells the
+host how long the upstream observation remains current. Renewals do not extend
+that deadline. The host renews at one third of the lease, using remaining
+freshness; stale/missing evidence sends UNKNOWN. The device expires a command at
+`min(lease_seconds, valid_for)`. A duplicate does not renew either deadline.
+
+Direct device HTTP follows the same lease semantics. Stop the host while doing
+a direct-control test, otherwise its renewals can replace test state.
+
+## Scheduling and outcomes
+
+One visible message and three pending messages are allowed. Higher priority wins;
+equal priority is FIFO. A higher-priority arrival drops the visible lower-priority
+message permanently. Timers begin after the opening transition is successfully
+rendered. Expiry/cancel selects the next message. UNKNOWN preserves visible and
+queued messages and accepts new ones, including after state-lease expiry. It
+shows an LCP logo with “Stream Status Unknown” beneath it, shrinking above a
+message card when present and filling the screen otherwise; detailed
+diagnostics remain in status responses. Touch is opt-in for the verified XPT2046 wiring. Requires-ack messages have no
+timed expiry; a fresh press/release after the layout settles records
+`acknowledged`. A tap on a timed card records `dismissed`. Remote cancellation
+remains `cancelled`. See [touch operation](touch.md). The eight-entry device outbox
+survives restart and repeats in status until explicitly confirmed. The host
+persists/deduplicates receipts before confirming; a full or failed store does not
+confirm. Touch-disabled devices still reject requires-ack messages.
+
+HTTP maps validation to 422, ID/session conflicts to 409, capacity to 429,
+unknown message IDs to 404 and unavailable/uncertain delivery to 503. Accepted
+commands with rendering faults return 200 and `display_success: false`.
+`GET /healthz` reports HTTP process liveness only. Inspect `status` separately
+for USB connectivity, display health, source freshness and interaction support.
+HTTP connections have a five-second read timeout and at most eight active handlers;
+a busy host sender rejects new work rather than building a backlog.
