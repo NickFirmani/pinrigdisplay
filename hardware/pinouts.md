@@ -20,41 +20,6 @@ Complete soldering pinout using SPI0, with LCD and touchscreen sharing the SPI b
 | 14            | T_IRQ      | GP15          | 20                | 14            |
 
 
-| Pico physical pin | Elecrow pin # |
-| ----------------- | ------------- |
-| 20                | 14            |
-| 21                | 13            |
-| 21                | 9             |
-| 22                | 3             |
-| 24                | 10            |
-| 24                | 7             |
-| 25                | 12            |
-| 25                | 6             |
-| 26                | 5             |
-| 27                | 4             |
-| 29                | 11            |
-| 36                | 8             |
-| 38                | 2             |
-| 40                | 1             |
-
-
-| Pico physical pin | Elecrow pin # |
-| ----------------- | ------------- |
-| 40                | 1             |
-| 38                | 2             |
-| 36                | 8             |
-| 29                | 11            |
-| 27                | 4             |
-| 26                | 5             |
-| 25                | 6             |
-| 25                | 12            |
-| 24                | 7             |
-| 24                | 10            |
-| 22                | 3             |
-| 21                | 9             |
-| 21                | 13            |
-| 20                | 14            |
-
 ### Shared solder connections
 
 Only 11 unique connections are needed between the two boards.
@@ -67,22 +32,6 @@ Only 11 unique connections are needed between the two boards.
 
 Join these at the display or with short Y-splices. Each controller has its own chip select (`GP17` for LCD, `GP22` for touch).
 
-### Firmware pin constants
+Pico GP numbers are GPIO identifiers, not physical pins or Linux BCM numbers.
 
-```
-
-#define TFT_MISO  16
-#define TFT_MOSI  19
-#define TFT_SCLK  18
-#define TFT_CS    17
-#define TFT_DC    20
-#define TFT_RST   21
-
-#define TOUCH_CS  22
-#define TOUCH_IRQ 15
-
-```
-
-These are GPIO numbers, not physical pin numbers.
-
-Original wiring reference: [display connector image](img.png).
+Connector reference: [display connector image](img.png).

@@ -3,25 +3,18 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pinrig-display-controller"
+name = "pinrig-artwork"
 version = "0.1.0"
-description = "SPI display device with leased state and serial/HTTP commands"
+description = "Desktop artwork builder and preview for the Pico display"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = ["Pillow>=9", "pinrig-protocol==0.1.0"]
-
-[project.optional-dependencies]
-serial = ["pyserial>=3.5"]
-hardware = ["spidev>=3.6", "rpi-lgpio>=0.6"]
-
-[project.scripts]
-display-controller = "display_controller.server:main"
 
 [tool.setuptools]
 include-package-data = false
 
 [tool.setuptools.packages.find]
-include = ["display_controller*"]
+include = ["pinrig_artwork*"]
 
 [tool.setuptools.package-data]
-"display_controller.display" = ["assets/*.png"]
+"pinrig_artwork" = ["assets/*.png"]

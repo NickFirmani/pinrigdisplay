@@ -1,7 +1,7 @@
 import unittest
 from pinrig_host.service import Host
 from pinrig_host.delivery import LocalDelivery, SerialDelivery
-from display_controller.serial import SerialEndpoint
+from tests.helpers import SerialEndpoint
 from tests.helpers import device, command, Clock
 
 
@@ -30,21 +30,21 @@ class HostTests(unittest.TestCase):
         self.link.fail = True; self.host.tick()
         self.send('set_state', 'new', state='camera_active', valid_for=100)
         self.link.fail = False; self.clock.advance(10); self.host.tick()
-        self.assertEqual(self.c.requested, 'camera_active')
+        self.assertEqual(self.c.state, 'camera_active')
         self.assertEqual(len([x for x in self.link.sent if x['operation']=='show_message']), 1)
 
     def test_upstream_stale_and_restart_unknown(self):
         self.send('set_state', state='on_air', valid_for=2)
         self.clock.advance(3); self.host.tick()
-        self.assertEqual(self.c.requested, 'unknown')
+        self.assertEqual(self.c.state, 'unknown')
         restarted = Host(self.link, clock=self.clock); restarted.tick()
-        self.assertEqual(self.c.requested, 'unknown')
+        self.assertEqual(self.c.state, 'unknown')
 
     def test_device_restart_restores_only_current_state(self):
         self.send('set_state', state='on_air')
         new, _, _ = device(); new.session = 'newboot'; self.link.controller = new
         self.host.tick()
-        self.assertEqual(new.requested, 'on_air')
+        self.assertEqual(new.state, 'on_air')
         self.assertIsNone(new.visible)
 
     def test_uncertain_message_delivery_cached_without_replay(self):
@@ -55,7 +55,7 @@ class HostTests(unittest.TestCase):
         self.link.lost_reply = False
         self.assertEqual(self.send('show_message', 'msg', title='T', body='B'), result)
         self.assertEqual(len([x for x in self.link.sent if x['operation']=='show_message']), 1)
-        self.assertEqual(self.c.visible.id, 'msg')
+        self.assertEqual(self.c.visible['id'], 'msg')
 
     def test_busy_sender_and_conflicting_duplicate(self):
         self.host.lock.acquire()
@@ -115,4 +115,4 @@ class BackoffAcceptanceTests(unittest.TestCase):
             self.assertFalse(reply['device_accepted'])
         self.assertEqual(host.reconnect_at, deadline)
         link.fail = False; clock.advance(1); host.tick()
-        self.assertEqual(c.requested, 'on_air')
+        self.assertEqual(c.state, 'on_air')

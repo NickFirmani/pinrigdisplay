@@ -6,8 +6,8 @@ import sys
 import struct
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from PIL import Image, ImageDraw
-from display_controller.display.pages import PageRenderer, _font
-from display_controller.display.renderer import encode_rgb565
+from pinrig_artwork.pages import PageRenderer, _font
+from pinrig_artwork.renderer import encode_rgb565
 
 
 def pack_block(raw):

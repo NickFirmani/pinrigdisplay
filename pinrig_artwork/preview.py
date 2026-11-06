@@ -1,8 +1,8 @@
-"""Render deterministic UI scenarios without SPI: python -m display_controller.preview."""
+"""Render deterministic UI scenarios without SPI: python -m pinrig_artwork.preview."""
 import argparse
 from pathlib import Path
 from PIL import Image
-from .display.pages import PageRenderer
+from .pages import PageRenderer
 
 
 def main():

@@ -116,15 +116,18 @@ def run(targets, stop, *, url='ws://127.0.0.1:4455', password='', token='',
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--rig1', required=True, help='Rig 1 booth service URL')
-    parser.add_argument('--rig2', required=True, help='Rig 2 booth service URL')
+    parser.add_argument('--rig1', help='Rig 1 booth service URL')
+    parser.add_argument('--rig2', help='Rig 2 booth service URL')
     parser.add_argument('--obs-url', default='ws://127.0.0.1:4455')
     args = parser.parse_args()
+    targets = {rig: url for rig, url in (('rig1', args.rig1), ('rig2', args.rig2)) if url}
+    if not targets:
+        parser.error('configure at least one of --rig1 or --rig2')
     logging.basicConfig(level=logging.INFO)
     stop = threading.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: stop.set())
-    run({'rig1': args.rig1, 'rig2': args.rig2}, stop, url=args.obs_url,
+    run(targets, stop, url=args.obs_url,
         password=os.environ.get('OBS_WEBSOCKET_PASSWORD', ''), token=os.environ.get('PINRIG_OBS_TOKEN', ''))
 
 

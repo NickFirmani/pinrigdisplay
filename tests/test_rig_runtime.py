@@ -31,7 +31,7 @@ class LocalClientTests(unittest.TestCase):
         host = Host(link, clock=clock)
         client = LocalClient(host)
         self.addCleanup(host.close)
-        self.addCleanup(controller.close)
+        self.addCleanup(setattr, controller, "closed", True)
         self.assertTrue(client.send('set_state', {'state': 'camera_active'})['ok'])
         self.assertEqual(client.send('set_state', {'state': 'invalid'})['error']['code'], 'invalid_request')
         link.lost = True
@@ -46,7 +46,7 @@ class LocalClientTests(unittest.TestCase):
 class RuntimeTests(unittest.TestCase):
     def test_delivery_loop_renews_state_and_durably_confirms_taps(self):
         controller, clock, _ = device()
-        self.addCleanup(controller.close)
+        self.addCleanup(setattr, controller, "closed", True)
         with TemporaryDirectory() as directory:
             controller.interactions = InteractionStore(Path(directory) / 'device.sqlite3')
             controller.touch_available = True

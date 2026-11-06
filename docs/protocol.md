@@ -1,15 +1,13 @@
 # Command protocol v1
 
-In production the authority and USB host module run in one `pinrig-rig`
-process. The HTTP command interface below is for the optional standalone
-maintenance host or Linux device; the rig service exposes booth/OBS/status
-endpoints instead and calls the host module in-process.
+The authority and USB host module run in one `pinrig-rig` process. Its HTTP
+API exposes `/api/status`, `/api/obs`, `/api/messages`, and `/api/clear`;
+there is no public `/api/commands` listener.
 
-HTTP: `POST /api/commands`, `Content-Type: application/json`. USB: UTF-8 JSON
-followed by newline, 115200 baud. Both accept the same envelope and return the
-same result fields. Frames and HTTP bodies are limited to 8192 bytes (excluding
-the serial newline). Overflow discards through the next newline. Invalid UTF-8,
-JSON, versions, operations and fields receive explicit errors.
+The command envelope below is shared by the in-process host and Pico USB link.
+USB uses newline-delimited UTF-8 JSON at 115200 baud with an 8192-byte frame
+limit excluding the newline. Overflow discards through the next newline.
+Invalid encoding, JSON, versions, operations and fields receive explicit errors.
 
 ```json
 {"version":1,"request_id":"unique-id","operation":"hello","params":{}}
@@ -48,7 +46,7 @@ acceptance response is a snapshot, not an ongoing delivery receipt.
 
 ## Retry and reconnect contract
 
-The Linux device and HTTP host retain up to 512 mutation responses for
+The embedded host retain up to 512 mutation responses for
 **120 seconds** from first receipt. The Pico device retains 64 for **15 seconds**;
 `hello` advertises each endpoint's actual limits. Within that window, the same normalized command/request ID
 returns the original response without repeating side effects. Reusing an ID
@@ -60,16 +58,16 @@ globally unique IDs for new work. Host and device windows are independent.
 
 The serial host has one sender, a two-second response deadline and bounded
 1–30 second reconnect backoff. It does not automatically replay messages after
-uncertain delivery. The HTTP response explicitly reports `delivery_uncertain`,
+uncertain delivery. The host response explicitly reports `delivery_uncertain`,
 `device_accepted: null`, and `message_replay: false`; the original message may
-already be on the display. Retrying the HTTP request returns that cached outcome.
+already be on the display. Retrying the request returns that cached outcome.
 After connectivity returns, query device status by original message ID. Device
-history retains the last 32 terminal message outcomes on Linux or 16 on Pico,
+history retains the last 16 terminal message outcomes on Pico,
 so it is not an audit log.
 
 The host keeps the latest desired state even when disconnected, explicitly
 resends it after reconnect, and never queues transient messages for reconnect.
-Its HTTP session is independent of the device session. Host restart intentionally
+Its command session is independent of the device session. Host restart intentionally
 forgets desired state. Producers must submit fresh state again.
 
 ## Ownership and freshness
@@ -81,8 +79,8 @@ that deadline. The host renews at one third of the lease, using remaining
 freshness; stale/missing evidence sends UNKNOWN. The device expires a command at
 `min(lease_seconds, valid_for)`. A duplicate does not renew either deadline.
 
-Direct device HTTP follows the same lease semantics. Stop the host while doing
-a direct-control test, otherwise its renewals can replace test state.
+Stop the rig service before direct USB diagnostics so only one process owns
+the serial port.
 
 ## Scheduling and outcomes
 
@@ -93,7 +91,7 @@ rendered. Expiry/cancel selects the next message. UNKNOWN preserves visible and
 queued messages and accepts new ones, including after state-lease expiry. It
 shows an LCP logo with “Stream Status Unknown” beneath it, shrinking above a
 message card when present and filling the screen otherwise; detailed
-diagnostics remain in status responses. Touch is opt-in for the verified XPT2046 wiring. Requires-ack messages have no
+diagnostics remain in status responses. Touch uses the Pico XPT2046 wiring. Requires-ack messages have no
 timed expiry; a fresh press/release after the layout settles records
 `acknowledged`. A tap on a timed card records `dismissed`. Remote cancellation
 remains `cancelled`. See [touch operation](touch.md). The eight-entry device outbox

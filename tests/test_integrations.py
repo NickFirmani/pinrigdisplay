@@ -285,22 +285,21 @@ class VideonodeTests(unittest.TestCase):
 
 class BoothContractTests(unittest.TestCase):
     def test_booth_survives_duration_tap_and_web_clear_are_distinct(self):
-        from display_controller.controller import DisplayController
+        from tests.helpers import core, Store
         from pinrig_protocol.interactions import InteractionStore
-        from tests.helpers import Clock as DeviceClock, Display, Pages
+        from tests.helpers import Clock as DeviceClock, Display
         from pinrig_host.delivery import LocalDelivery
         from pinrig_host.service import Host
         from pinrig_host.client import LocalClient
 
         with TemporaryDirectory() as directory:
             clock = DeviceClock()
-            controller = DisplayController(display=Display(), pages=Pages(), clock=clock,
-                interactions=InteractionStore(Path(directory) / 'device.sqlite3'))
+            controller = core.Device(Display(), Store(), clock, 'boot', lambda: 'interaction-1')
             host = Host(LocalDelivery(controller), clock=clock,
                 interactions=InteractionStore(Path(directory) / 'host.sqlite3'))
 
             authority = Authority('rig1', LocalClient(host), clock=clock)
-            controller.start()
+            controller.tick()
             try:
                 authority.observe_obs(False, 8)
                 authority.observe_video(True)
@@ -346,7 +345,7 @@ class BoothContractTests(unittest.TestCase):
                 self.assertEqual(controller.status()['visible_message']['message_id'], 'booth-unknown')
             finally:
                 host.close()
-                controller.close()
+                controller.closed = True
 
 
 class FakeConnection:
@@ -406,3 +405,24 @@ class RigHTTPTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+class OBSCommandLineTests(unittest.TestCase):
+    def test_one_or_two_destinations(self):
+        from unittest.mock import patch
+        from pinrig_producers.obs import main
+        for args, targets in [(['--rig1', 'http://one'], {'rig1': 'http://one'}),
+                              (['--rig2', 'http://two'], {'rig2': 'http://two'}),
+                              (['--rig1', 'http://one', '--rig2', 'http://two'],
+                               {'rig1': 'http://one', 'rig2': 'http://two'})]:
+            with self.subTest(args=args), patch('sys.argv', ['pinrig-obs', *args]), \
+                    patch('pinrig_producers.obs.run') as run, \
+                    patch('pinrig_producers.obs.signal.signal'):
+                main()
+                self.assertEqual(run.call_args.args[0], targets)
+
+    def test_missing_destination_is_rejected(self):
+        from unittest.mock import patch
+        from pinrig_producers.obs import main
+        with patch('sys.argv', ['pinrig-obs']), patch('sys.stderr'), self.assertRaises(SystemExit) as error:
+            main()
+        self.assertEqual(error.exception.code, 2)
