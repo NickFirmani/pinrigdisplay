@@ -16,6 +16,26 @@ BACKGROUND = "#070f20"
 ON_AIR_REGION = (38, 58, 442, 262)
 
 
+def _luminance(color: tuple[int, int, int]) -> float:
+    channels=[v/255 for v in color]
+    linear=[v/12.92 if v<=.04045 else ((v+.055)/1.055)**2.4 for v in channels]
+    return sum(v*w for v,w in zip(linear,(.2126,.7152,.0722)))
+
+
+def _camera_stripe(face: tuple[int, int, int], level: float) -> tuple[int, int, int]:
+    """Match ON AIR's luminance contrast while retaining the camera face hue."""
+    reference_face=_scale_color((220,49,22),level)
+    reference_stripe=_scale_color((170,30,16),level)
+    contrast=(_luminance(reference_face)+.05)/(_luminance(reference_stripe)+.05)
+    target=max(0.,(_luminance(face)+.05)/contrast-.05)
+    low,high=0.,1.
+    for _ in range(16):
+        middle=(low+high)/2
+        if _luminance(_scale_color(face,middle))<target:low=middle
+        else:high=middle
+    return _scale_color(face,(low+high)/2)
+
+
 @lru_cache(maxsize=64)
 def _font(size: int, *, bold: bool = False) -> ImageFont.FreeTypeFont:
     filename = "DejaVuSansCondensed-Bold.ttf" if bold else "DejaVuSans.ttf"
@@ -144,12 +164,12 @@ class PageRenderer:
             self._unknown_image = canvas
         return self._unknown_image.copy()
 
-    def on_air(self, level: float) -> Image.Image:
+    def on_air(self, level: float, stripe_phase: int = 0, background_level: float | None = None) -> Image.Image:
         image = self._sign_housing(background="#100706", housing="#35100d",
                                    rim="#641a12", trim="#a94121", outline="#170706")
         draw = ImageDraw.Draw(image)
 
-        self._draw_lit_panel(draw, level)
+        self._draw_lit_panel(draw, level, stripe_phase, background_level)
         return image
 
     @staticmethod
@@ -169,7 +189,7 @@ class PageRenderer:
 
         return image
 
-    def camera_status(self, *, active: bool, level: float = 1.) -> Image.Image:
+    def camera_status(self, *, active: bool, level: float = 1., stripe_phase: int = 0) -> Image.Image:
         """Render a steady camera sign in the same housing as ON AIR."""
         if active:
             image = self._sign_housing(background="#100c06", housing="#35250d",
@@ -188,7 +208,7 @@ class PageRenderer:
         from PIL import ImageColor
         face = _scale_color(ImageColor.getrgb(face), level)
         self._panel_background(draw, face=face, edge=edge, highlight=highlight,
-                               stripe=stripe)
+                               stripe=_camera_stripe(face,level), stripe_phase=stripe_phase)
         x0, y0, x1, y1 = ON_AIR_REGION
         if active:
             _centered_text(draw, (x0, y0 + 16, x1, y0 + 48), "CAMERA",
@@ -207,15 +227,17 @@ class PageRenderer:
         return image
 
     @staticmethod
-    def _draw_lit_panel(draw: ImageDraw.ImageDraw, level: float) -> None:
+    def _draw_lit_panel(draw: ImageDraw.ImageDraw, level: float, stripe_phase: int = 0, background_level: float | None = None) -> None:
         x0, y0, x1, y1 = ON_AIR_REGION
-        face = _scale_color((220, 49, 22), level)
+        face_level = level if background_level is None else background_level
+        face = _scale_color((220, 49, 22), face_level)
         edge = _scale_color((255, 130, 44), max(0.82, level))
         highlight = _scale_color((255, 176, 72), level)
 
         PageRenderer._panel_background(
             draw, face=face, edge=edge, highlight=highlight,
-            stripe=_scale_color((170, 30, 16), level),
+            stripe=_scale_color((170, 30, 16), face_level),
+            stripe_phase=stripe_phase,
         )
 
         title_font = _font(103, bold=True)
@@ -235,11 +257,15 @@ class PageRenderer:
                           face: str | tuple[int, int, int],
                           edge: str | tuple[int, int, int],
                           highlight: str | tuple[int, int, int],
-                          stripe: str | tuple[int, int, int]) -> None:
+                          stripe: str | tuple[int, int, int], stripe_phase: int = 0) -> None:
         x0, y0, x1, y1 = ON_AIR_REGION
         draw.rounded_rectangle((x0, y0, x1 - 1, y1 - 1), radius=18,
                                fill=face, outline=edge, width=6)
         draw.rounded_rectangle((x0 + 10, y0 + 10, x1 - 11, y1 - 11), radius=12,
                                outline=highlight, width=3)
-        for x in range(x0 + 28, x1 - 20, 48):
-            draw.line((x, y0 + 14, x - 18, y1 - 15), fill=stripe, width=2)
+        for x in range(x0 - 48 + (stripe_phase % 4)*12, x1 + 48, 48):
+            # Clip moving marks inside the panel, away from its fixed trim.
+            for y in range(y0 + 14, y1 - 14):
+                px = x - round(18*(y-y0-14)/(y1-y0-29))
+                if x0+14 <= px < x1-14:
+                    draw.line((px,y,px+1,y),fill=stripe)

@@ -36,14 +36,20 @@ USB response time, and touch responsiveness for idle, state change, message
 arrival, and dismissal. Record actual SPI rate if available. Keep the existing
 20 MHz requested setting during comparisons.
 
-Prototype these in order, keeping sign lettering steady:
+Prototype this for the ON AIR State.
 
-| Experiment | Proposed behavior | Decision criterion |
-| --- | --- | --- |
-| Small heartbeat | Two to four positions/segments near the sign, stepping every 250–500 ms | Cheapest baseline; visible at the intended viewing distance without looking like an alarm. |
-| Barberpole / marching border | Shift diagonal marks through a narrow strip or housing edge in discrete phases | Preferred visual candidate; update only the strip, not half the screen. |
-| Stepped scan band | Move a subtle highlight through four to eight positions in the sign housing | Try if it reads as deliberate at low cadence; redraw old and new band regions only. |
-| Alternating upper/lower housing | Alternate small accents on the two halves | Compare to the requested half-icon idea; reject if it appears broken or obscures state. |
+| Barberpole / marching border | Shift diagonal marks through the background of the on air badge.
+Animate the background of the image itself rather than a separate animation? eg have the lines behind the text move like a barberpole?
+
+All three signs already have diagonal lines behind the lettering, so we can shift those lines through discrete phases while keeping the text, shadows, frame, and colors fixed.
+
+The important constraint is transfer cost: moving lines across the whole sign could become expensive if we redraw the entire panel. I’d build the animation assets on the desktop, then have the Pico update only the regions where the stripes change. Each update would include the correctly composited lettering wherever necessary, so the stripes never paint over the text.
+
+I’d prototype four phases at roughly 375 ms per step, with subtle contrast. Both the full-size and message-size signs need their own correctly scaled phases.
+
+This is feasible, but it will cost more bandwidth than the separate strip. We should measure the actual changed regions and command/touch latency before choosing the cadence.
+
+///
 
 The panel scans its own memory independently of SPI writes. A top-to-bottom
 write is not guaranteed to track visible scanout, especially after rotation.

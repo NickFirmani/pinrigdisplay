@@ -4,6 +4,8 @@ import framebuf
 import gc
 import json
 import math
+import struct
+import io
 import time
 from machine import Pin, SPI
 
@@ -26,6 +28,9 @@ class Hardware:
         self.fonts={}
         for size in (22,24):
             with open('assets/font%d.bin'%size,'rb') as f:self.fonts[size]=bytearray(f.read())
+        self.motion_phase=None
+        self.bytes_written=0
+        self.motion_seconds=0
         self.signature=None
         self.card_signature=None
         self.initialize()
@@ -80,6 +85,7 @@ class Hardware:
                     count=decode(block,self.chunk,size,len(self.chunk))
                     if count<=0:raise OSError('invalid image block')
                     self.spi.write(memoryview(self.chunk)[:count]);total+=count
+                    self.bytes_written+=count
                 if total!=307200:raise OSError('invalid image size')
         finally:self.lcd_cs(1)
 
@@ -130,9 +136,11 @@ class Hardware:
         step=max(0,min(3,round((height-188)/44)))
         period={'on_air':4,'camera_active':3,'camera_inactive':6}.get(state,6)
         level=round((1-math.cos(phase*2*math.pi/period)))
-        if state=='unknown':level=0
+        if step==3 or state=='unknown':level=0
         signature=(state,step,level,msg['id'] if msg else None,fault)
-        if signature==self.signature:return
+        if signature==self.signature:
+            if state!='unknown' and step==3:self.animate_on_air(phase,state)
+            return
         gc.collect()
         try:
             self.image('assets/%s-%d-%d.r'%(state,step,level))
@@ -144,8 +152,58 @@ class Hardware:
                 try:self.spi.write(memoryview(self.card_buffer)[:480*(320-h)*2])
                 finally:self.lcd_cs(1)
             self.signature=signature
+            self.motion_phase=0 if state!='unknown' and step==3 else None
+            if state!='unknown' and step==3:self.animate_on_air(phase,state)
         except Exception:
             self.signature=None
+            raise
+
+    def animate_on_air(self, phase, state='on_air'):
+        """Apply grouped barberpole patches; a failed phase forces a full repaint."""
+        target=int(phase/.750)%4
+        if target==self.motion_phase:return
+        started=time.ticks_ms()
+        self.spi.init(baudrate=20_000_000)
+        self.touch_cs(1)
+        try:
+            if getattr(self,'motion_asset_state',None)!=state:
+                self.motion_assets=None
+                gc.collect()
+                assets=[]
+                for index in range(4):
+                    with open('assets/%s-motion-%d.bin'%(state,index),'rb') as source:
+                        assets.append(source.read())
+                self.motion_assets=assets
+                self.motion_asset_state=state
+            with io.BytesIO(self.motion_assets[target]) as source:
+                if source.read(4)!=b'PDM2':raise OSError('invalid motion asset')
+                while True:
+                    header=source.read(8)
+                    if not header:break
+                    if len(header)!=8:raise OSError('truncated motion header')
+                    x,y,w,h=struct.unpack('<4H',header)
+                    size=w*h*2
+                    if not w or not h or x+w>480 or y+h>320 or size>len(self.chunk):
+                        raise OSError('invalid motion rectangle')
+                    packed_size=source.read(2)
+                    if len(packed_size)!=2:raise OSError('truncated motion size')
+                    packed_size=struct.unpack('<H',packed_size)[0]
+                    if packed_size>30724:raise OSError('motion block too large')
+                    data=source.read(packed_size)
+                    if len(data)!=packed_size:raise OSError('truncated motion pixels')
+                    if decode(data,self.chunk,len(data),len(self.chunk))!=size:
+                        raise OSError('invalid motion block')
+                    data=memoryview(self.chunk)[:size]
+                    self.window(x,y,w,h)
+                    self.lcd_cs(0);self.dc(1)
+                    try:self.spi.write(data)
+                    finally:self.lcd_cs(1)
+                    self.bytes_written+=size
+            self.motion_phase=target
+            self.motion_seconds=time.ticks_diff(time.ticks_ms(),started)/1000
+        except Exception:
+            self.signature=None
+            self.motion_phase=None
             raise
 
     def pressed(self):

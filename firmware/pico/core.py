@@ -221,4 +221,6 @@ class Device:
             'visible_message':({'message_id':self.visible['id'],'status':self.visible['status']} if self.visible else None),
             'pending':[m['id'] for m in self.pending],'queue_depth':len(self.pending),
             'recent_messages':dict(self.history),'acknowledgment_available':self.touch_available,
-            'interactions':interactions,'last_render_seconds':self.last_render_seconds}
+            'interactions':interactions,'last_render_seconds':self.last_render_seconds,
+            'motion_seconds':getattr(self.display,'motion_seconds',None),
+            'display_bytes_written':getattr(self.display,'bytes_written',None)}

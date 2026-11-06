@@ -46,3 +46,30 @@ firmware: UNKNOWN now requires `unknown-0-0.r` through `unknown-3-0.r`. The old
 single UNKNOWN image is insufficient. Preserve `interactions.json`, stop the USB
 host for the upload, and run the attended acceptance checks in
 [deployment](../../docs/deployment.md) before event use.
+
+## Full-size sign barberpole experiment
+
+Build standard assets, then run `python -m tools.build_on_air_motion --output PATH`.
+Upload the generated `STATE-3-0.r` and four `STATE-motion-*.bin` files for
+`on_air`, `camera_active`, and `camera_inactive` into Pico `assets/`
+together with the firmware. All three full-size signs use four stationary-text stripe
+phases, 750 ms per step. Other layouts retain their previous behavior.
+
+Changed pixels are grouped into 10-pixel tiles, merged horizontally into 78 / 61 / 67
+windows for ON AIR / ACTIVE / INACTIVE, respectively, sending
+115,200 / 121,600 / 121,600 pixel bytes per phase. This trades retransmission of some
+steady pixels for fewer windows than the original 580 exact dirty rectangles.
+Four compressed phases for the current state are cached in RAM on first use to avoid subsequent flash
+reads. The cache is replaced when the state changes to bound memory use. The first motion timing includes loading that cache. `PDM2` assets contain
+little-endian x/y/width/height uint16 records followed by a uint16 compressed
+length and a run/literal RGB565 block. Failed updates invalidate the full image
+cache. Missed phases are skipped; SPI remains requested at 20 MHz.
+
+Status exposes the latest `motion_seconds` and successful image/motion payload
+bytes (excluding address commands and message-card writes). USB and touch are
+serviced between updates. Hardware timing and visual acceptance remain necessary.
+Synthetic testing renews a real state lease; stopping its source restores UNKNOWN.
+The breathing prototype is shelved.
+
+ACTIVE and INACTIVE stripe colors match ON AIR’s relative luminance contrast
+against the panel face at each brightness level, preserving their amber/blue hues.
