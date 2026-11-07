@@ -81,9 +81,10 @@ def make_rig_handler(authority, *, token: str = ''):
                     accept_obs(authority, value)
                     reply = {'ok': True}
                 elif self.path == '/api/messages':
-                    if not isinstance(value, dict) or set(value) != {'body', 'request_id'}:
-                        raise ValueError('expected body and request_id')
-                    reply = authority.message(value['body'], value['request_id'])
+                    if (not isinstance(value, dict) or not {'body', 'request_id'} <= set(value)
+                            or set(value) - {'body', 'request_id', 'title', 'priority', 'duration', 'requires_ack'}):
+                        raise ValueError('expected body, request_id and optional message parameters')
+                    reply = authority.message(**value)
                 else:
                     if not isinstance(value, dict) or set(value) != {'message_id'}:
                         raise ValueError('expected message_id')

@@ -86,7 +86,7 @@ the serial port.
 
 One visible message and three pending messages are allowed. Higher priority wins;
 equal priority is FIFO. A higher-priority arrival drops the visible lower-priority
-message permanently. Timers begin after the opening transition is successfully
+message permanently. Timers begin after the final fixed card is successfully
 rendered. Expiry/cancel selects the next message. UNKNOWN preserves visible and
 queued messages and accepts new ones, including after state-lease expiry. It
 shows an LCP logo with “Stream Status Unknown” beneath it, shrinking above a
@@ -106,3 +106,13 @@ commands with rendering faults return 200 and `display_success: false`.
 for USB connectivity, display health, source freshness and interaction support.
 HTTP connections have a five-second read timeout and at most eight active handlers;
 a busy host sender rejects new work rather than building a backlog.
+
+## Rig HTTP message API
+
+POST `/api/messages` accepts `request_id`, `body`, and optional `title`,
+`duration`, `priority`, `requires_ack`. With any optional parameter supplied,
+USB validation/defaults apply (title required, duration 8 seconds, priority 0,
+requires_ack false). Legacy body/request_id-only requests retain title BOOTH,
+priority 8 and requires_ack true. IDs need not have a booth prefix.
+POST `/api/clear` accepts any valid `message_id`; cancellation is not acknowledgment.
+Example: `{"request_id":"notice-1","title":"Notice","body":"Ready","duration":12}`.

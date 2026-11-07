@@ -88,6 +88,15 @@ class AuthorityTests(unittest.TestCase):
         self.authority.publish()
         self.assertEqual(self.client.calls[-1][1]['state'], 'unknown')
 
+    def test_message_metadata_is_bounded_and_preserves_first_request(self):
+        self.authority.message('Original', 'notice', title='Test')
+        self.assertEqual(self.authority.status()['message_details']['notice']['body'], 'Original')
+        for i in range(70):
+            self.authority.message('Body', 'notice-' + str(i), title='Test')
+        details = self.authority.status()['message_details']
+        self.assertEqual(len(details), 64)
+        self.assertNotIn('notice', details)
+
     def test_booth_messages_require_ack_and_clear_is_cancellation(self):
         self.authority.message('Player ready', 'booth-123')
         operation, params, request_id = self.client.calls[-1]
@@ -100,8 +109,16 @@ class AuthorityTests(unittest.TestCase):
         for body in ['', 'a' * 241, '\x00']:
             with self.assertRaises(ValueError):
                 self.authority.message(body, 'booth-123')
-        with self.assertRaises(ValueError):
-            self.authority.clear('other-producer')
+        self.authority.clear('other-producer')
+        self.authority.message('Timed', 'custom-1', title='Notice')
+        params = self.client.calls[-1][1]
+        self.assertEqual(params['duration'], 8)
+        self.assertEqual(params['priority'], 0)
+        self.assertFalse(params['requires_ack'])
+        for options in ({'title': 'x', 'duration': 0}, {'title': 'x', 'priority': 10},
+                        {'title': 'x', 'requires_ack': 1}, {'title': 'x', 'extra': True}):
+            with self.assertRaises(ValueError):
+                self.authority.message('Invalid', 'custom-2', **options)
 
 
 class FakeOBS:

@@ -18,6 +18,7 @@ class Authority:
         self.observations = {}
         self.obs_until = 0.
         self.last_delivery = None
+        self.message_details = {}
 
     def observe_obs(self, live: bool | None, valid_for: float) -> None:
         with self.lock:
@@ -53,22 +54,32 @@ class Authority:
             self.last_delivery = reply
             return reply
 
-    def message(self, body: str, request_id: str) -> dict:
+    def message(self, body: str, request_id: str, **options) -> dict:
+        """Send protocol options; body-only calls retain the booth defaults."""
         identifier(request_id, 'request_id')
-        if not request_id.startswith('booth-'):
-            raise ValueError('booth request IDs must start with booth-')
+        params = ({'title': 'BOOTH', 'priority': 8, 'requires_ack': True}
+                  if not options else {})
+        params.update(options)
+        params['body'] = body
         params = Command.parse({'version': 1, 'request_id': request_id, 'session': 'validate',
-            'operation': 'show_message', 'params': {'title': 'BOOTH', 'body': body,
-                'priority': 8, 'requires_ack': True}}).params
-        return self.send('show_message', params, request_id=request_id)
+            'operation': 'show_message', 'params': params}).params
+        with self.sender_lock:
+            reply = self.client.send('show_message', params, request_id=request_id)
+            if reply.get('ok') and request_id not in self.message_details:
+                self.message_details[request_id] = dict(params)
+                if len(self.message_details) > 64:
+                    del self.message_details[next(iter(self.message_details))]
+            return reply
 
     def clear(self, message_id: str) -> dict:
+        """Cancel a message without recording acknowledgment."""
         identifier(message_id, 'message_id')
-        if not message_id.startswith('booth-'):
-            raise ValueError('only booth messages can be cleared here')
         return self.send('cancel_message', {'message_id': message_id})
 
     def status(self) -> dict:
         resolution = self.resolution()
-        return {'rig': self.rig, 'state': resolution.state, 'reason': resolution.reason,
-                'host': self.send('status', {}), 'state_delivery': self.last_delivery}
+        with self.sender_lock:
+            host = self.client.send('status', {})
+            details = dict(self.message_details)
+        return {'message_details': details, 'rig': self.rig, 'state': resolution.state, 'reason': resolution.reason,
+                'host': host, 'state_delivery': self.last_delivery}
