@@ -35,16 +35,13 @@ class Device:
         self.closed = False
 
     def geometry(self, now):
-        t = min(1., max(0., (now-self.layout_at)/.5))
-        return self.start_height+(self.target-self.start_height)*t*t*(3-2*t)
+        return self.target
 
     def layout(self, now):
         target = 188 if self.visible else 320
         if target != self.target:
             self.gesture = None
-            self.start_height = self.geometry(now)
             self.target = target
-            self.layout_at = now
 
     def finish(self, msg, outcome):
         self.gesture = None

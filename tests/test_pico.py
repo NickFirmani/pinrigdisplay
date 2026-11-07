@@ -107,9 +107,8 @@ class PicoTests(unittest.TestCase):
         self.assertEqual(self.device.visible['id'],'c')
 
     def test_timer_starts_after_successful_opening(self):
-        self.state();self.msg(duration=1)
-        self.clock.advance(.25);self.device.tick();self.assertIsNone(self.device.visible['expires'])
-        self.display.fail=True;self.clock.advance(.25);self.device.tick()
+        self.state();self.display.fail=True;self.msg(duration=1)
+        self.clock.advance(.5);self.device.tick()
         self.assertIsNone(self.device.visible['expires'])
         self.display.fail=False;self.device.tick()
         self.assertEqual(self.device.visible['expires'],1.5)
@@ -176,9 +175,9 @@ class PicoTests(unittest.TestCase):
         self.assertEqual(self.display.phases[-1],phase)
         self.send('cancel_message','cancel',message_id='msg')
         self.clock.advance(.5);self.device.tick()
-        self.assertEqual(self.display.phases[-1],phase)
+        self.assertAlmostEqual(self.display.phases[-1],phase+.5)
         self.clock.advance(.1);self.device.tick()
-        self.assertAlmostEqual(self.display.phases[-1],phase+.1)
+        self.assertAlmostEqual(self.display.phases[-1],phase+.6)
 
 
 class AssetCodecTests(unittest.TestCase):
@@ -214,7 +213,7 @@ class PicoLayoutTests(unittest.TestCase):
         hardware.signature=None
         hardware.card_buffer=bytearray(480*132*2)
         hardware.spi=SimpleNamespace(write=lambda data:writes.append(len(data)))
-        hardware.image=images.append
+        hardware.image=lambda path,height:images.append(path)
         hardware.window=lambda *args:windows.append(args)
         hardware.make_card=lambda msg,fault:cards.append(msg)
         hardware.lcd_cs=lambda value:None

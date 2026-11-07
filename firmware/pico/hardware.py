@@ -66,10 +66,10 @@ class Hardware:
         self.command(0x2B,bytes([y>>8,y&255,y1>>8,y1&255]))
         self.command(0x2C)
 
-    def image(self,path):
+    def image(self,path,height=320):
         self.spi.init(baudrate=20_000_000)
         self.touch_cs(1)
-        self.window(0,0,480,320)
+        self.window(0,0,480,height)
         self.lcd_cs(0);self.dc(1)
         try:
             with open(path,'rb') as source:
@@ -84,8 +84,10 @@ class Hardware:
                     if len(block)!=size:raise OSError('truncated image')
                     count=decode(block,self.chunk,size,len(self.chunk))
                     if count<=0:raise OSError('invalid image block')
-                    self.spi.write(memoryview(self.chunk)[:count]);total+=count
-                    self.bytes_written+=count
+                    written=max(0,min(count,480*height*2-total))
+                    if written:self.spi.write(memoryview(self.chunk)[:written])
+                    total+=count
+                    self.bytes_written+=written
                 if total!=307200:raise OSError('invalid image size')
         finally:self.lcd_cs(1)
 
@@ -124,27 +126,29 @@ class Hardware:
         self.card.hline(12,1,456,self.color(116,162,155))
         if msg:
             p=msg['params']
-            title=('TAP TO ACK: ' if p['requires_ack'] else '')+p['title']
+            title=p['title']
             body=p['body']
             if fault:title='TOUCH ACK FAILED';body=fault+'; message retained'
             for line in self.lines(title,24,1):self.text(line,14,10,24)
             y=45
-            for line in self.lines(body,22,3):self.text(line,14,y,22);y+=26
+            for line in self.lines(body,22,2 if p['requires_ack'] else 3):self.text(line,14,y,22);y+=26
+            if p['requires_ack']:self.text('Tap to acknowledge',14,101,22)
         self.card_signature=signature
 
     def render(self,state,msg,height,phase,fault):
-        step=max(0,min(3,round((height-188)/44)))
+        step=0 if msg else 3
         period={'on_air':4,'camera_active':3,'camera_inactive':6}.get(state,6)
         level=round((1-math.cos(phase*2*math.pi/period)))
-        if step==3 or state=='unknown':level=0
+        level=0
         signature=(state,step,level,msg['id'] if msg else None,fault)
         if signature==self.signature:
             if state!='unknown' and step==3:self.animate_on_air(phase,state)
             return
         gc.collect()
         try:
-            self.image('assets/%s-%d-%d.r'%(state,step,level))
-            h=188+44*step
+            h=188 if msg else 320
+            if self.signature is None or self.signature[:3] != signature[:3]:
+                self.image('assets/%s-%d-%d.r'%(state,step,level),h)
             if h<320:
                 self.make_card(msg,fault)
                 self.window(0,h,480,320-h)
