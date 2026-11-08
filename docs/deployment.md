@@ -1,40 +1,14 @@
 # Install and update
 
-Production: one Linux stream PC → independent Armbian rig PCs → USB → Pico 2 W
-→ display. Home: this PC → Pi 4B → USB → Pico → display. Collect actual rig
-addresses, management API URLs, USB paths and OBS scene names; examples below are placeholders.
-The rig page uses port 48194; the stream overview uses 48195 by default.
+Start with a Linux software bundle for each PC's architecture and Python version,
+and a Pico 2 W display bundle. To make these from source, see
+[Build releases](#build-releases). On each Linux PC install Python 3.11 or newer,
+venv support and systemd. Each rig also needs the `dialout` group.
 
-## 1. Prepare releases (build machine)
+Use the actual rig addresses, stable USB device paths and OBS program scene names.
+Production has two Armbian rigs. At home, configure just the Pi 4B rig.
 
-Use Python 3.11+. For Linux software bundles, build on the target Linux
-architecture and Python version. Network access is needed when building wheels;
-installation uses the resulting offline wheelhouse. Debian-family prerequisites
-on both PCs are `python3`, `python3-venv`, and systemd; rig PCs also need
-the `dialout` group. Install these with the machine's package manager first.
-
-From the repository root:
-
-```sh
-python3 -m venv .venv
-.venv/bin/pip install ./pinrig_protocol ./pinrig_host './pinrig_producers[rig,obs]' .
-.venv/bin/python -m tools.build_software_release --output /tmp/software-RELEASE --release RELEASE
-.venv/bin/python -m tools.build_release --output /tmp/display-RELEASE --release RELEASE \
-  --runtime /path/to/pico2w.uf2 --runtime-version 1.29.0
-```
-
-Choose an immutable release name, such as a date plus revision; each output
-must be a new directory. Use the [official Pico 2 W MicroPython runtime](https://micropython.org/download/RPI_PICO2_W/)
-matching `--runtime-version`. A display release includes its UF2, application,
-shared validator, all static/motion graphics, fonts, identity and checksums.
-Pillow/fonts are build dependencies only. Keep release directories out of Git.
-Hashes detect damaged payloads; stage releases only from a trusted build source.
-
-Expected: software wheels and `software.json`; display `manifest.json`,
-`runtime.uf2`, firmware and `assets/`. Both builders fail on missing build inputs.
-If a build fails, remove that incomplete output directory and rebuild.
-
-## 2. Bootstrap the stream PC (on that Linux PC)
+## 1. Install the stream overview on the Linux OBS PC
 
 Copy the matching software bundle onto the PC. Create a private configuration
 file outside the checkout. Generate two credentials with
@@ -59,11 +33,8 @@ reports and once for maintenance; substitute them into this JSON:
 }
 ```
 
-Use one entry at home; add rig2 (or more rigs) with distinct IDs, URLs and scene
-mappings as needed. Get each serial path on its rig with
-`ls /dev/serial/by-id/` during its local bootstrap. Set display-service and
-management API URLs to their actual configured ports. Missing videonode evidence remains
-UNKNOWN, never “no consumers.” Videonode itself is installed separately.
+Add a second rig entry for production with its own ID, URLs and scene names.
+Install videonode separately on each rig that supplies camera usage information.
 
 ```sh
 chmod 600 /path/to/stream-config.json
@@ -83,9 +54,10 @@ The setup creates/reuses `pinrigdisplay`, stages a versioned venv under
 For failure, inspect `journalctl -u pinrig-stream -n 100 --no-pager`, correct the
 reported prerequisite/configuration issue, then rerun the installer.
 
-## 3. Bootstrap each rig locally, then update through its API
+## 2. Install the rig service on each Linux host
 
-On each rig, install the Linux prerequisites and copy a matching software bundle.
+On each rig, copy the matching Linux bundle and run `ls /dev/serial/by-id/`
+to find the Pico’s persistent USB path.
 Create a private rig configuration outside the checkout:
 
 ```json
@@ -100,7 +72,7 @@ Create a private rig configuration outside the checkout:
 }
 ```
 
-Use the credentials generated in step 2 and the actual USB path collected on
+Use the credentials generated in step 1 and the actual USB path collected on
 this rig. Optional local fields include `port`, `videonode_url`, `bootsel_mount`
 and `management_bind`. Keep the rig and management ports distinct. Then run,
 on that rig:
@@ -111,35 +83,13 @@ sudo python3 /path/to/software-RELEASE/install_linux.py \
   --bundle /path/to/software-RELEASE --config /path/to/rig-config.json
 ```
 
-Expected: `pinrig-rig` runs the display/booth service; `pinrig-manager` runs the
-software-management API, normally on port 48198. Bootstrap creates/reuses the
-service account and USB permissions, and installs root-owned management code,
-a fixed local installer and `/etc/pinrig-rig.json`. The management API stays
-available while the display service restarts. Allow its configured port from
-the stream PC. Initial bootstrap is local; an API cannot install itself onto a
-blank rig.
+Check `systemctl is-active pinrig-rig pinrig-manager`. Both should return
+`active`. Open the rig page at `http://ACTUAL_RIG_ADDRESS:48194`, then check
+that the stream overview can reach this rig. Allow the stream PC to reach the
+management API on the configured port (default 48198). For a startup failure,
+see the [log commands](operations.md#logs).
 
-Set `management_url` for each rig in the stream configuration. Stage a software
-bundle at `/var/lib/pinrig-stream/releases/RELEASE`, readable by `pinrigdisplay`.
-Choose the rig and release in the overview, enter the maintenance credential,
-and choose **Install rig software**. The overview uploads validated files to the
-management API, starts an installation job, follows its progress and verifies
-the running rig release. It needs no SSH access, keys or rig OS login.
-
-The rig API accepts a bounded archive of immutable release files and an install
-request containing only a release name. It invokes its own trusted installer
-with fixed local configuration; it never executes the uploaded installer script.
-Application wheels install as `pinrigdisplay`. Management code and the local
-helper are updated only by rerunning the trusted local bootstrap. Updates keep
-rig configuration, environment and durable receipts; firmware is installed
-separately through the rig page.
-
-For a failure, read the management job's phase/error and
-`journalctl -u pinrig-manager -n 100 --no-pager` on the rig. Correct the reported
-prerequisite, credential, artifact or service problem and retry. Rerunning local
-bootstrap preserves the environment credentials and receipt database.
-
-## 4. Install the display (on the rig webpage)
+## 3. Install the display from the rig page
 
 Copy the complete display bundle to `/var/lib/pinrig-host/releases/RELEASE` on
 its rig, readable by `pinrigdisplay`. Open the rig page, select the release and
@@ -171,15 +121,46 @@ service restart. Never upload with an unrelated process still owning that USB po
 
 ## Updates
 
-Build and stage a new immutable release. Use the overview for rig software and
-the rig page for display firmware; a software update does not implicitly reflash
-the display. Software stages before service replacement and refuses to overwrite
-an active release with different contents. Retry interrupted setup or install a
-new release after correcting the reported error. Firmware and software maintenance
-share an installation lock on the rig. Do not update during an event.
+1. **Update rig software first when moving to the trimmed display bundle.**
+   Older rig software rejects the eight-image bundle because it expects 32
+   additional sign images. Stage the matching Linux bundle at
+   `/var/lib/pinrig-stream/releases/RELEASE` on the stream PC, readable by
+   `pinrigdisplay`. In the overview select the rig and release, enter the
+   maintenance credential, and choose **Install rig software**. Wait for the
+   verified release and healthy rig service.
+2. Stage the display bundle on that rig and follow step 3. The job reports
+   its phase and any error. Correct the reported issue before retrying.
+3. To update the rig management service or its trusted installer, rerun the
+   local bootstrap from step 2. Ordinary updates preserve configuration and receipts.
 
 Update the stream PC using the same local bootstrap command and its configuration.
 Its service is `pinrig-stream`; the legacy `pinrig-obs --rig1/--rig2` sender remains
 available but must not run alongside the stream service for the same rigs.
 
 See [operations](operations.md) for failure checks and attended acceptance.
+
+## Build releases
+
+Build Linux bundles on the target Linux architecture and Python version. The
+build downloads wheels so the installer can use them offline.
+
+From the repository root:
+
+```sh
+python3 -m venv .venv
+.venv/bin/pip install ./pinrig_protocol ./pinrig_host './pinrig_producers[rig,obs]' .
+.venv/bin/python -m tools.build_software_release --output /tmp/software-RELEASE --release RELEASE
+.venv/bin/python -m tools.build_release --output /tmp/display-RELEASE --release RELEASE \
+  --runtime /path/to/pico2w.uf2 --runtime-version 1.29.0
+```
+
+Choose an immutable release name, such as a date plus revision; each output
+must be a new directory. Use the [official Pico 2 W MicroPython runtime](https://micropython.org/download/RPI_PICO2_W/)
+matching `--runtime-version`. A display release includes its UF2, application,
+shared validator, all static/motion graphics, fonts, identity and checksums.
+Pillow/fonts are build dependencies only. Keep release directories out of Git.
+Hashes detect damaged payloads; stage releases only from a trusted build source.
+
+Expected: software wheels and `software.json`; display `manifest.json`,
+`runtime.uf2`, firmware and `assets/`. Both builders fail on missing build inputs.
+If a build fails, remove that incomplete output directory and rebuild.

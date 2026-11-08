@@ -3,6 +3,16 @@
 Start at the stream overview (default port 48195), then follow a rig link
 (default 48194) for display details, booth messages and firmware maintenance.
 
+## Booth messages
+
+Choose **Physical acknowledgment** for a card that stays until someone taps it
+or the booth clears it. Choose **Timed** for a card that expires after its
+display interval. Press and release anywhere on a visible card to acknowledge
+a required card or dismiss a timed one early. **Clear** cancels a visible or
+queued card. UNKNOWN preserves messages and their queue.
+
+## Troubleshooting
+
 | Observation | Check/action |
 | --- | --- |
 | OBS unavailable or authentication error | Open OBS; enable WebSocket; check its URL/password against `/etc/pinrig-stream.env`; restart `pinrig-stream` after changing configuration. |
@@ -19,7 +29,9 @@ source, accepted command, successful render and person acknowledgment distinct.
 Reported ages use each machine's own clock, with the overview tracking rig poll
 age separately. A stale report never becomes healthy by refreshing the browser.
 
-Logs on Linux:
+## Logs
+
+Run the command for the affected service on its Linux PC.
 
 ```sh
 sudo journalctl -u pinrig-stream -n 100 --no-pager
@@ -42,8 +54,22 @@ On the home chain, then both production rigs, verify clean setup, installer
 reruns, rig update, firmware update, failed/interrupted install and recovery,
 version reporting, OBS closed/wrong password/unknown scene, one unreachable rig,
 USB unplug/reconnect, stale source, render/touch/storage failures and restart.
-Exercise sign states slowly and check pixels and real taps in person. Keep
-hardware checks outside the default suite and avoid running them during an event.
+
+At the assembled display, record the release, rig, and observations for each check:
+
+- Cycle all four signs slowly at the usual viewing distance. During sustained
+  barberpole motion, measure USB command round trips and tap response times,
+  compare with idle and card changes, and record render times and bytes written.
+  Let the lease expire and check the switch to UNKNOWN.
+- Send short and 240-character cards with long words, newlines and unsupported
+  characters. Check readability, clipping and ellipsis. Open, replace and clear
+  cards while watching for a blank frame. Motion should resume after the last card.
+- Queue two cards. Tap a required card, allow a timed card to expire, and tap
+  another timed card early. Verify each outcome on the rig page. Repeat with
+  UNKNOWN and check that a press held across replacement cannot clear the new card.
+- Disconnect USB and power-cycle the Pico with a receipt awaiting confirmation.
+  Verify reconnect and receipt delivery. Exercise the physical BOOTSEL install
+  and check that the display and touch work afterward.
 
 For the existing attended API smoke check, pause OBS reporting and ensure no
 booth cards are active:

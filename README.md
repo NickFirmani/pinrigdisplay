@@ -11,7 +11,8 @@ installer. Rig software updates use an authenticated management API that stays
 available during display-service restarts; bootstrap installs it locally. The Pico alone controls SPI and touch; it has no webpage.
 
 See [install/update](docs/deployment.md), [operations](docs/operations.md),
-[protocol](docs/protocol.md), [touch](docs/touch.md), and [wiring](hardware/pinouts.md).
+[protocol](docs/protocol.md), [wiring](hardware/pinouts.md), and
+[enclosure assembly](hardware/enclosure/README.md).
 
 Desktop artwork tools require Pillow; host and producer installs do not:
 

@@ -66,3 +66,8 @@ done
 ```
 
 The export checks verify the default geometry. Repeat the physical fit checks for your printer and hardware.
+
+After mounting, check that the cable seats fully and its strain relief holds,
+the enclosure stays stable during taps, and BOOTSEL is reachable. Run the
+enclosed display for a normal session and record its temperature, print
+settings, fit adjustments, and a photo of the fitted assembly.

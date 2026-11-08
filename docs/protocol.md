@@ -46,7 +46,7 @@ acceptance response is a snapshot, not an ongoing delivery receipt.
 
 ## Retry and reconnect contract
 
-The embedded host retain up to 512 mutation responses for
+The embedded host retains up to 512 mutation responses for
 **120 seconds** from first receipt. The Pico device retains 64 for **15 seconds**;
 `hello` advertises each endpoint's actual limits. Within that window, the same normalized command/request ID
 returns the original response without repeating side effects. Reusing an ID
@@ -91,13 +91,21 @@ rendered. Expiry/cancel selects the next message. UNKNOWN preserves visible and
 queued messages and accepts new ones, including after state-lease expiry. It
 shows an LCP logo with “Stream Status Unknown” beneath it, shrinking above a
 message card when present and filling the screen otherwise; detailed
-diagnostics remain in status responses. Touch uses the Pico XPT2046 wiring. Requires-ack messages have no
-timed expiry; a fresh press/release after the layout settles records
-`acknowledged`. A tap on a timed card records `dismissed`. Remote cancellation
-remains `cancelled`. See [touch operation](touch.md). The eight-entry device outbox
-survives restart and repeats in status until explicitly confirmed. The host
-persists/deduplicates receipts before confirming; a full or failed store does not
-confirm. Touch-disabled devices still reject requires-ack messages.
+diagnostics remain in status responses.
+
+The Pico polls XPT2046 touch pressure at 100 kHz on the shared SPI bus. A fresh
+press and release on the same visible card records `acknowledged` for a required
+card or `dismissed` for a timed one. Remote Clear records `cancelled`. Required
+cards have no timed expiry. A device with touch disabled rejects them.
+
+Before removing a tapped card, the Pico commits its receipt to the eight-entry
+LittleFS outbox (`interactions.json`) using atomic replacement and sync. A full
+or failed outbox retains the card and reports a fault. Receipts survive ordinary
+restarts and repeat in status until confirmed. The host stores each receipt once
+in SQLite before confirming it, so a lost confirmation can be retried. The
+default store is `/var/lib/pinrig-host/interactions.sqlite3` (`--interactions`).
+At the 10,000-receipt limit or on a storage error, confirmation stops and the
+host reports a fault. Archive host receipts before reaching capacity.
 
 HTTP maps validation to 422, ID/session conflicts to 409, capacity to 429,
 unknown message IDs to 404 and unavailable/uncertain delivery to 503. Accepted
