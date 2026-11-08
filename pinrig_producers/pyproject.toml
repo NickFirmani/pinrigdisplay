@@ -13,7 +13,9 @@ rig = ["pinrig-host==0.1.0"]
 obs = ["websocket-client>=1.6,<2"]
 
 [project.scripts]
+pinrig-manager = "pinrig_producers.manager:main"
 pinrig-rig = "pinrig_producers.rig:main"
+pinrig-stream = "pinrig_producers.overview:main"
 pinrig-obs = "pinrig_producers.obs:main"
 
 [tool.setuptools]
@@ -22,4 +24,4 @@ packages = ["pinrig_producers"]
 package-dir = {"pinrig_producers" = "."}
 
 [tool.setuptools.package-data]
-pinrig_producers = ["booth.html"]
+pinrig_producers = ["booth.html", "overview.html"]

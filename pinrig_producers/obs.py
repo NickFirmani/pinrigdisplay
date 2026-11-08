@@ -1,5 +1,6 @@
 """OBS v5 snapshots, routed to the two rig authorities on the local network."""
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import base64
 import hashlib
 import json
@@ -67,32 +68,40 @@ class OBS:
     def snapshot(self) -> dict[str, bool]:
         streaming = self.request('GetStreamStatus').get('outputActive')
         scene = self.request('GetCurrentProgramScene').get('currentProgramSceneName')
+        self.details = {'streaming': streaming, 'scene': scene}
         return live_rigs(streaming, scene)
 
 
 def publish(targets: dict[str, str], evidence: dict[str, bool | None], *, token: str = '',
-            sampled_at: float, clock=time.monotonic, post=request_json) -> None:
+            sampled_at: float, clock=time.monotonic, post=request_json, report=None) -> None:
     """Bound each report to the original snapshot; never queue stale reports."""
     headers = {'Authorization': 'Bearer ' + token} if token else {}
     for rig, url in targets.items():
         remaining = OBS_VALID_FOR - (clock() - sampled_at)
         if remaining <= 0:
-            return
+            if report:
+                report(rig, 'observation expired before delivery')
+            continue
         try:
             post(url.rstrip('/') + '/api/obs', {'rig': rig, 'live': evidence[rig],
                  'valid_for': remaining}, headers=headers)
+            if report:
+                report(rig, None)
         except (OSError, ValueError) as error:
+            if report:
+                report(rig, str(error))
             LOGGER.warning('OBS report to %s failed: %s', rig, error)
 
 
 def run(targets, stop, *, url='ws://127.0.0.1:4455', password='', token='',
-        connect=None, clock=time.monotonic, post=request_json) -> None:
+        connect=None, clock=time.monotonic, post=request_json, status=None, mappings=None) -> None:
     transport_errors = (OSError, ValueError)
     if connect is None:
         from websocket import WebSocketException, create_connection
         connect = create_connection
         transport_errors += (WebSocketException,)
     socket, obs = None, None
+    executor = ThreadPoolExecutor(max_workers=len(targets)) if status else None
     try:
         while not stop.is_set():
             sampled_at = clock()
@@ -101,15 +110,31 @@ def run(targets, stop, *, url='ws://127.0.0.1:4455', password='', token='',
                     socket = connect(url, timeout=2, subprotocols=['obswebsocket.json'])
                     obs = OBS(socket, password)
                 evidence = obs.snapshot()
+                if mappings is not None:
+                    evidence = {rig: obs.details['streaming'] and obs.details['scene'] in mappings[rig] for rig in targets}
+                if status:
+                    status.observed({**obs.details, 'connected': True, 'error': None,
+                        'scene_recognized': obs.details['scene'] in {scene for scenes in mappings.values() for scene in scenes} if mappings is not None else obs.details['scene'] in (*RIG_SCENES.values(), BOTH_RIGS_SCENE)})
             except transport_errors as error:
                 LOGGER.warning('OBS unavailable: %s', error)
                 if socket is not None:
                     socket.close()
                 socket, obs = None, None
                 evidence = {rig: None for rig in targets}
-            publish(targets, evidence, token=token, sampled_at=sampled_at, clock=clock, post=post)
+                if status:
+                    status.observed({'connected': False, 'error': str(error), 'scene': None, 'streaming': None})
+            if executor:
+                pending = [executor.submit(publish, {rig: target}, evidence, token=token,
+                    sampled_at=sampled_at, clock=clock, post=post, report=status.delivered)
+                    for rig, target in targets.items()]
+                for future in pending:
+                    future.result()
+            else:
+                publish(targets, evidence, token=token, sampled_at=sampled_at, clock=clock, post=post)
             stop.wait(1)
     finally:
+        if executor:
+            executor.shutdown(wait=True)
         if socket is not None:
             socket.close()
 

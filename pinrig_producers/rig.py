@@ -30,7 +30,7 @@ def accept_obs(authority, value: object) -> None:
     authority.observe_obs(live, valid_for)
 
 
-def make_rig_handler(authority, *, token: str = ''):
+def make_rig_handler(authority, *, token: str = '', maintenance=None, maintenance_token: str = ''):
     class Handler(make_handler(authority)):
         def do_GET(self):
             if self.path == '/':
@@ -42,6 +42,10 @@ def make_rig_handler(authority, *, token: str = ''):
                 self.send_header('X-Content-Type-Options', 'nosniff')
                 self.end_headers()
                 self.wfile.write(body)
+            elif self.path == '/api/maintenance' and maintenance:
+                self.send_json(200, maintenance['jobs'].status())
+            elif self.path == '/api/releases' and maintenance:
+                self.send_json(200, {'releases': sorted(p.name for p in maintenance['releases'].iterdir() if p.is_dir() and (p / 'manifest.json').is_file())})
             elif self.path == '/api/status':
                 try:
                     self.send_json(200, authority.status())
@@ -51,7 +55,7 @@ def make_rig_handler(authority, *, token: str = ''):
                 super().do_GET()
 
         def do_POST(self):
-            if self.path not in ('/api/obs', '/api/messages', '/api/clear'):
+            if self.path not in ('/api/obs', '/api/messages', '/api/clear', '/api/firmware'):
                 self.send_json(404, {'error': 'route not found'})
                 return
             origin = self.headers.get('Origin')
@@ -61,6 +65,9 @@ def make_rig_handler(authority, *, token: str = ''):
                 same_origin = False
             if not same_origin:
                 self.send_json(403, {'error': 'cross-origin requests are not accepted'})
+                return
+            if self.path == '/api/firmware' and (not maintenance or not maintenance_token or not hmac.compare_digest(self.headers.get('Authorization', '').encode(), ('Bearer ' + maintenance_token).encode())):
+                self.send_json(403, {'error': 'configured maintenance credential required'})
                 return
             if self.path == '/api/obs' and token and not hmac.compare_digest(
                     self.headers.get('Authorization', '').encode(), ('Bearer ' + token).encode()):
@@ -77,6 +84,18 @@ def make_rig_handler(authority, *, token: str = ''):
                 if len(raw) != length:
                     raise ValueError('incomplete body')
                 value = json.loads(raw)
+                if self.path == '/api/firmware':
+                    if not isinstance(value, dict) or not {'release', 'clean'} <= set(value) or set(value) - {'release', 'clean', 'runtime'} or type(value['clean']) is not bool or type(value.get('runtime', False)) is not bool:
+                        raise ValueError('expected release and clean boolean')
+                    from pinrig_protocol.commands import identifier
+                    release = identifier(value['release'], 'release')
+                    directory = maintenance['releases'] / release
+                    if directory.resolve().parent != maintenance['releases'].resolve():
+                        raise ValueError('invalid release directory')
+                    from .releases import validate_release
+                    validate_release(directory)
+                    self.send_json(202, maintenance['jobs'].start(lambda phase: maintenance['installer'].install(directory, phase, clean=value['clean'], runtime=value.get('runtime', False))))
+                    return
                 if self.path == '/api/obs':
                     accept_obs(authority, value)
                     reply = {'ok': True}
@@ -109,18 +128,19 @@ def run_delivery(authority, host, stop, *, clock=time.monotonic) -> None:
             except (OSError, ValueError) as error:
                 LOGGER.warning('State delivery unavailable: %s', error)
             publish_at = clock() + 1
-        host.tick()
+        with authority.sender_lock:
+            host.tick()
         stop.wait(.5)
 
 
 def run_service(authority, host, stop, *, bind: str, port: int, videonode_url: str,
-                token: str = '', credentials: str = '', server_factory=HTTPServer,
+                token: str = '', credentials: str = '', maintenance=None, maintenance_token: str = '', server_factory=HTTPServer,
                 thread_factory=threading.Thread) -> None:
     """Own the listener, workers and USB host, including partial-startup cleanup."""
     server = None
     workers = []
     try:
-        server = server_factory((bind, port), make_rig_handler(authority, token=token))
+        server = server_factory((bind, port), make_rig_handler(authority, token=token, maintenance=maintenance, maintenance_token=maintenance_token))
         # Drain accepted HTTP work before closing USB, so a late request cannot
         # reopen the serial connection after shutdown.
         server.daemon_threads = False
@@ -142,18 +162,22 @@ def run_service(authority, host, stop, *, bind: str, port: int, videonode_url: s
                 if worker.ident is not None:
                     worker.join()
         finally:
+            if maintenance:
+                maintenance['jobs'].wait()
             host.close()
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--rig', choices=('rig1', 'rig2'), required=True)
+    parser.add_argument('--rig', required=True)
     parser.add_argument('--serial', required=True, help='stable /dev/serial/by-id/... device path')
     parser.add_argument('--interactions', type=Path,
                         default=Path('/var/lib/pinrig-host/interactions.sqlite3'))
     parser.add_argument('--videonode-url', default='http://127.0.0.1:8090')
     parser.add_argument('--bind', default='127.0.0.1')
     parser.add_argument('--port', type=int, default=48194)
+    parser.add_argument('--releases', type=Path, default=Path('/var/lib/pinrig-host/releases'))
+    parser.add_argument('--bootsel-mount', type=Path)
     args = parser.parse_args()
     # Only rig installs need the host/serial extra; the stream-PC OBS generator
     # and --help remain usable without it.
@@ -170,9 +194,13 @@ def main() -> None:
         args.serial, 115200, timeout=.1, write_timeout=1)),
         interactions=InteractionStore(args.interactions, capacity=10000))
     authority = Authority(args.rig, LocalClient(host))
+    from .maintenance import Jobs, FirmwareInstaller
+    args.releases.mkdir(parents=True, exist_ok=True)
+    maintenance = {'jobs': Jobs(args.interactions.parent / 'maintenance.json'), 'installer': FirmwareInstaller(host, args.serial, lock_path=args.interactions.parent / 'maintenance.lock', bootsel_mount=args.bootsel_mount), 'releases': args.releases}
     run_service(authority, host, stop, bind=args.bind, port=args.port,
                 videonode_url=args.videonode_url, token=os.environ.get('PINRIG_OBS_TOKEN', ''),
-                credentials=os.environ.get('VIDEONODE_CREDENTIALS', ''))
+                credentials=os.environ.get('VIDEONODE_CREDENTIALS', ''), maintenance=maintenance,
+                maintenance_token=os.environ.get('PINRIG_MAINTENANCE_TOKEN', ''))
 
 
 if __name__ == '__main__':

@@ -1,5 +1,10 @@
 """MicroPython device state machine. Hardware and clocks are injected."""
 import json
+import sys
+try:
+    from release_identity import IDENTITY
+except ImportError:
+    IDENTITY = {'release': None, 'protocol': 1, 'target': 'pico2w'}
 from commands import Command, CommandError, response, error_response
 
 RETRY_SECONDS = 15
@@ -210,7 +215,7 @@ class Device:
             interactions=[]
             self.touch_fault=str(error)[:120]
             self.touch_available=False
-        return {'session':self.session,'requested_state':self.state,'displayed_state':self.displayed,
+        return {'firmware':dict(IDENTITY), 'runtime_version': list(sys.implementation.version[:3]),'session':self.session,'requested_state':self.state,'displayed_state':self.displayed,
             'revision':self.revision,'displayed_revision':self.displayed_revision,
             'healthy':not self.closed and self.fault is None and self.displayed is not None,
             'display_fault':self.fault,'touch_fault':self.touch_fault,

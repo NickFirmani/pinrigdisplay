@@ -2,6 +2,7 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+import threading
 
 from pinrig_host.client import LocalClient
 from pinrig_host.delivery import LocalDelivery
@@ -78,6 +79,7 @@ class RuntimeTests(unittest.TestCase):
     def test_failed_publication_does_not_stop_usb_polling(self):
         calls = []
         class Authority:
+            sender_lock = threading.Lock()
             def publish(self):
                 raise OSError('unavailable')
         class Host:

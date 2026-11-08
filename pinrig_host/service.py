@@ -23,9 +23,36 @@ class Host:
         self.backoff = 1.
         self.last_response = None
         self.device_status = None
+        self.device_status_at = None
+        self.maintenance = False
         self.fault = 'Not connected'
         self.lock = threading.Lock()
         self.cache = OrderedDict()
+        self.status_lock = threading.Lock()
+        self._capture_status()
+
+    def _capture_status(self) -> None:
+        # Called with USB ownership; publish a complete snapshot under a short lock.
+        snapshot = {'host_healthy': True, 'connected': self.device_session is not None,
+            'delivery_fault': self.fault, 'last_device_response': self.last_response,
+            'desired_state': self.desired['state'] if self.desired else 'unknown',
+            'device': deepcopy(self.device_status), 'maintenance': self.maintenance,
+            'interaction_delivery': (self.interaction_fault or 'ready') if self.interactions else 'unavailable',
+            '_fresh_until': self.fresh_until, '_device_status_at': self.device_status_at}
+        with self.status_lock:
+            self.status_snapshot = snapshot
+
+    def status(self) -> dict:
+        """Read cached health without waiting for an in-progress USB exchange."""
+        with self.status_lock:
+            result = deepcopy(self.status_snapshot)
+        now = self.clock()
+        result['upstream_fresh'] = now < result.pop('_fresh_until')
+        sampled_at = result.pop('_device_status_at')
+        age = None if sampled_at is None else max(0., now - sampled_at)
+        result['device_status_age'] = age
+        result['device_status_stale'] = not result['connected'] or age is None or age > 3
+        return result
 
     def _command(self, operation, params=None):
         return {'version': 1, 'request_id': uuid.uuid4().hex, 'session': self.device_session,
@@ -76,6 +103,8 @@ class Host:
         try:
             if self.device_session is None and self.clock() < self.reconnect_at:
                 return
+            if self.maintenance:
+                return
             self._connect()
             if self.clock() >= self.renew_at:
                 self._renew()
@@ -88,6 +117,7 @@ class Host:
                 self._renew()
                 reply = self._exchange(self._command('status'))
             self.device_status = reply['result']
+            self.device_status_at = self.clock()
             self.fault = None
             if self.interactions is not None:
                 try:
@@ -104,25 +134,27 @@ class Host:
         except (OSError, ValueError) as error:
             self._disconnected(error)
         finally:
+            self._capture_status()
             self.lock.release()
 
     def handle(self, value: object) -> dict:
         rid = value.get('request_id') if isinstance(value, dict) else None
         if not isinstance(rid, str) or len(rid) > 64:
             rid = None
+        try:
+            cmd = Command.parse(value)
+        except CommandError as error:
+            return error_response(rid, error.code, str(error))
+        if cmd.operation == 'status':
+            return response(rid, self.status())
         if not self.lock.acquire(blocking=False):
             return error_response(rid, 'unavailable', 'sender busy; retry same ID shortly')
         try:
-            cmd = Command.parse(value)
             if cmd.operation == 'hello':
                 return response(rid, {'session': self.session, 'retry_seconds': RETRY_SECONDS,
                     'retry_capacity': RETRY_CAPACITY, 'acknowledgment_available': bool(self.interactions is not None and self.device_status and self.device_status.get('acknowledgment_available'))})
-            if cmd.operation == 'status':
-                return response(rid, {'host_healthy': True, 'connected': self.device_session is not None,
-                    'delivery_fault': self.fault, 'last_device_response': self.last_response,
-                    'desired_state': self.desired['state'] if self.desired else 'unknown',
-                    'upstream_fresh': self.clock() < self.fresh_until,
-                    'device': self.device_status, 'interaction_delivery': (self.interaction_fault or 'ready') if self.interactions else 'unavailable'})
+            if self.maintenance:
+                return error_response(rid, 'unavailable', 'display maintenance in progress')
             if cmd.session != self.session:
                 raise CommandError('session_changed', 'host restarted; handshake required')
             now = self.clock()
@@ -173,7 +205,26 @@ class Host:
         except CommandError as error:
             return error_response(rid, error.code, str(error))
         finally:
+            self._capture_status()
             self.lock.release()
+
+    def begin_maintenance(self) -> None:
+        """Quiesce USB under the same lock used by every normal exchange."""
+        with self.lock:
+            self.maintenance = True
+            self.delivery.close()
+            self.device_session = None
+            self._capture_status()
+
+    def end_maintenance(self) -> None:
+        """Reconnect with fresh upstream evidence after maintenance."""
+        with self.lock:
+            self.maintenance = False
+            self.device_session = None
+            self.reconnect_at = 0.
+            self.device_status = None
+            self.device_status_at = None
+            self._capture_status()
 
     def close(self) -> None:
         with self.lock:

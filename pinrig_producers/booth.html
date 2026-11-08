@@ -11,7 +11,9 @@
   .muted { color: #a8b6c4 } section { margin-top: 24px; padding: 24px; border: 1px solid #34414d; border-radius: 12px; background: #19222b }
   #state { display: inline-block; font-weight: 700; letter-spacing: .08em; padding: 5px 12px; background: #303f4e; border-radius: 5px }
   label { display: block; font-weight: 600; margin-bottom: 8px }
-  input, select, textarea { width: 100%; resize: vertical; min-height: 44px; border: 1px solid #657789; border-radius: 6px; padding: 12px; background: #101820; color: inherit; font: inherit }
+  input[type=checkbox] { width: auto; min-height: auto; margin-right: 8px }
+  pre { white-space: pre-wrap; overflow-wrap: anywhere }
+  input:not([type=checkbox]), select, textarea { width: 100%; resize: vertical; min-height: 44px; border: 1px solid #657789; border-radius: 6px; padding: 12px; background: #101820; color: inherit; font: inherit }
   :focus-visible { outline: 3px solid #76c8ff; outline-offset: 3px }
   button { margin-top: 12px; padding: 10px 18px; border: 0; border-radius: 6px; background: #9bd5ff; color: #10202c; font: inherit; font-weight: 600; cursor: pointer }
   button:disabled { opacity: .5; cursor: default } .clear { background: #344553; color: #edf2f6; margin: 0 0 0 12px }
@@ -26,6 +28,7 @@
   <h1 id="rig">Rig booth</h1>
   <p id="state">UNKNOWN</p>
   <p id="connection" class="muted" role="status">Connecting…</p>
+  <p id="source-status" class="muted"></p>
   <section>
     <form id="form">
       <label for="title">Title <span id="title-count">5/40</span></label>
@@ -51,7 +54,37 @@
     <p class="muted">Clearing a message cancels it. A tap is reported separately as acknowledged.</p>
     <ul id="messages"><li>No booth messages.</li></ul>
   </section>
+<section><h2>Display maintenance</h2><p id="versions"></p>
+<p>Choose a staged release. To install the runtime too, connect the Pico in BOOTSEL mode and mount it on this rig first.</p>
+<label>Release <select id="release"></select></label>
+<label>Maintenance credential <input id="maintenance-token" type="password" autocomplete="off"></label>
+<label><input id="runtime" type="checkbox"> Install bundled runtime (Pico must be in BOOTSEL mode on the configured mount)</label>
+<label><input id="clean" type="checkbox"> Clean reflash (discards pending tap receipts)</label>
+<button id="install-firmware" type="button">Install firmware</button><pre id="maintenance-result"></pre></section>
 </main>
+<script>
+async function maintenanceRefresh() {
+  try {
+    const releases = await (await fetch('/api/releases')).json();
+    const select = document.getElementById('release');
+    if (JSON.stringify(releases.releases) !== select.dataset.values) {
+      select.replaceChildren(...releases.releases.map(name => { const o=document.createElement('option'); o.value=name; o.textContent=name; return o; }));
+      select.dataset.values=JSON.stringify(releases.releases);
+    }
+    const job = await (await fetch('/api/maintenance')).json();
+    document.getElementById('maintenance-result').textContent=[job.state, job.phase, job.error, job.result?.release ? 'Installed '+job.result.release : ''].filter(Boolean).join(' · ');
+    document.getElementById('install-firmware').disabled=job.state === 'running';
+  } catch (error) { document.getElementById('maintenance-result').textContent=error.message; }
+}
+document.getElementById('install-firmware').onclick=async () => {
+  try {
+    const response=await fetch('/api/firmware', {method:'POST', headers:{'Content-Type':'application/json', Authorization:'Bearer '+document.getElementById('maintenance-token').value}, body:JSON.stringify({release:document.getElementById('release').value, clean:document.getElementById('clean').checked, runtime:document.getElementById('runtime').checked})});
+    const result=await response.json(); if (!response.ok) throw new Error(result.error || 'Installation failed');
+    await maintenanceRefresh();
+  } catch(error) { document.getElementById('maintenance-result').textContent=error.message; }
+};
+maintenanceRefresh(); setInterval(maintenanceRefresh, 3000);
+</script>
 <script>
   const el = id => document.getElementById(id);
   const labels = {on_air:'ON AIR',camera_active:'ACTIVE',camera_inactive:'INACTIVE',unknown:'UNKNOWN'};
@@ -94,17 +127,26 @@
   async function refresh() {
     try {
       const data = await api('/api/status');
-      el('rig').textContent = data.rig === 'rig1' ? 'Rig 1' : 'Rig 2';
+      el('rig').textContent = data.rig;
       document.title = el('rig').textContent + ' · Booth';
       el('state').textContent = labels[data.state] || 'UNKNOWN';
       if (!data.host.ok) throw new Error(data.host.error?.message || 'Host unavailable');
       const host = data.host.result;
       const device = host.device || {};
+      el('source-status').textContent = ['obs','videonode'].map(name => {
+        const source=data.sources?.[name];
+        const value=name==='obs'?source?.live:source?.active;
+        return (name==='obs'?'OBS':'Videonode')+': '+(!source || !source.fresh || value==null?'Unknown / stale':value?'Active':'Inactive')+(source?' · '+source.age.toFixed(1)+'s ago':'');
+      }).join(' · ');
+      el('versions').textContent = 'Rig ' + (data.software_release || data.software_version || 'unknown') + ' · Firmware ' + (device.firmware?.release || 'unknown') + ' · Device report age ' + (host.device_status_age == null ? 'unknown' : host.device_status_age.toFixed(1) + 's') + (host.device_status_stale ? ' · STALE' : '');
       ackAvailable = device.acknowledgment_available === true;
       lastRefresh = new Date();
       const problems = [];
+      if (host.maintenance) problems.push('Display maintenance in progress');
+      if (host.device_status_stale) problems.push('Display report stale');
       if (!host.connected) problems.push('USB display disconnected');
       if (host.delivery_fault) problems.push(host.delivery_fault);
+      if (device.healthy === false) problems.push('Display unhealthy');
       if (device.display_fault) problems.push('Display: ' + device.display_fault);
       if (device.touch_fault) problems.push('Touch: ' + device.touch_fault);
       if (host.interaction_delivery && host.interaction_delivery !== 'ready') problems.push('Tap receipt: ' + host.interaction_delivery);

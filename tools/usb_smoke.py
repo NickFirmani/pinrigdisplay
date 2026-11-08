@@ -5,6 +5,7 @@ import time
 import uuid
 
 from pinrig_producers.net import request_json
+from pinrig_protocol.commands import identifier
 
 
 def check_rig(url: str, rig: str, *, token: str = '', request=request_json,
@@ -71,7 +72,7 @@ def check_rig(url: str, rig: str, *, token: str = '', request=request_json,
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--url', default='http://localhost:48194')
-    parser.add_argument('--rig', choices=('rig1', 'rig2'), required=True)
+    parser.add_argument('--rig', type=lambda value: identifier(value, 'rig'), required=True)
     args = parser.parse_args()
     check_rig(args.url, args.rig, token=os.environ.get('PINRIG_OBS_TOKEN', ''))
     print('PASS: rig status, OBS ingestion, USB delivery, UNKNOWN retention and booth clear.')

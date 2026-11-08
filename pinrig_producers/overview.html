@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pinrig overview</title>
+<style>
+  :root { color-scheme: dark; font: 16px/1.5 system-ui,sans-serif; background:#11171d; color:#edf2f6 }
+  * { box-sizing:border-box } main { max-width:960px; margin:5vh auto; padding:24px }
+  section { padding:24px; margin:20px 0; border:1px solid #34414d; border-radius:12px; background:#19222b }
+  h1 { margin:0 } h2 { font-size:1.2rem } a { color:#9bd5ff }
+  label { display:block; margin-top:14px; font-weight:600 }
+  input,select { width:100%; min-height:44px; border:1px solid #657789; border-radius:6px; padding:10px; background:#101820; color:inherit; font:inherit }
+  button { margin-top:18px; padding:12px 18px; border:0; border-radius:6px; background:#9bd5ff; color:#10202c; font:inherit; font-weight:600; cursor:pointer }
+  button:disabled { opacity:.5; cursor:default } :focus-visible { outline:3px solid #76c8ff; outline-offset:3px }
+  .stale { border-color:#edb95d } .muted { color:#a8b6c4 }
+  dl { display:grid; grid-template-columns:minmax(110px,1fr) 2fr; gap:8px 16px }
+  dt { color:#a8b6c4 } dd { margin:0; overflow-wrap:anywhere } #job { overflow-wrap:anywhere }
+</style>
+<main>
+  <p class="muted">PINRIG CONTROL</p><h1>Stream overview</h1>
+  <section id="obs-panel"><h2>OBS</h2><dl id="obs"><dt>Status</dt><dd>Connecting…</dd></dl></section>
+  <div id="rigs"></div>
+  <section>
+    <h2>Install or update rig software</h2>
+    <p>Choose a configured rig and a staged software release. The rig’s management API must be bootstrapped and configured first.</p>
+    <label for="target">Rig</label><select id="target"></select>
+    <label for="release">Release</label><input id="release" required>
+    <label for="token">Maintenance credential</label><input id="token" type="password" autocomplete="off">
+    <button id="install" type="button">Install rig software</button><p id="job" role="status" aria-live="polite"></p>
+  </section>
+</main>
+<script>
+const el=id=>document.getElementById(id);
+const age=value=>value==null?'No report':value.toFixed(1)+' seconds ago';
+function fields(target, values) {
+  target.replaceChildren();
+  for(const [label,value] of Object.entries(values)) {
+    const term=document.createElement('dt'); term.textContent=label;
+    const description=document.createElement('dd'); description.textContent=value ?? 'Unknown';
+    target.append(term,description);
+  }
+}
+function jobText(job) {
+  return [job.state,job.phase,job.error,job.result?.release?'Installed '+job.result.release:''].filter(Boolean).join(' · ');
+}
+async function refresh() {
+  try {
+    const response=await fetch('/api/status');
+    if(!response.ok)throw Error('Overview unavailable');
+    const data=await response.json();
+    fields(el('obs'), {'Connection':data.obs.stale?'Unavailable or stale':'Connected',
+      'Program scene':data.obs.scene,'Streaming':data.obs.streaming==null?'Unknown':data.obs.streaming?'Live':'Stopped',
+      'Last observation':age(data.obs.age),'Scene mapping':data.obs.scene_recognized===false?'Unrecognized scene':'Configured',
+      'Error':data.obs.error || 'None'});
+    el('obs-panel').className=data.obs.stale?'stale':'';
+    el('job').textContent=jobText(data.maintenance);
+    el('install').disabled=data.maintenance.state==='running';
+    if(!el('target').options.length) for(const rig of data.rigs) {
+      const option=document.createElement('option'); option.value=rig.id; option.textContent=rig.id; el('target').append(option);
+    }
+    el('rigs').replaceChildren(...data.rigs.map(rig=>{
+      const section=document.createElement('section'); if(rig.stale)section.className='stale';
+      const heading=document.createElement('h2'); const link=document.createElement('a');
+      link.href=rig.url; link.textContent=rig.id+' · Open rig page'; heading.append(link); section.append(heading);
+      const detail=document.createElement('dl'); const host=rig.status?.host?.result; const device=host?.device;
+      const video=rig.status?.sources?.videonode;
+      fields(detail, {'Rig connection':rig.stale?'Stale / unreachable':'Reachable','Last rig report':age(rig.age),
+        'Rig software':rig.status?.software_release || rig.status?.software_version,
+        'Display firmware':device?.firmware?.release,'USB':rig.stale?'Stale':host?.connected?'Connected':'Disconnected',
+        'Display health':rig.stale || host?.device_status_stale?'Stale':device?.healthy?'Healthy':'Unavailable',
+        'Displayed state':device?.displayed_state,'Source status':rig.status?.reason,
+        'Videonode':rig.stale || !video?.fresh || video.active==null?'Unknown / stale':(video.active?'Active':'Inactive')+' · '+age(video.age),
+        'OBS delivery':rig.delivery.age==null?'No report':(rig.delivery.error || 'Delivered')+' · '+age(rig.delivery.age),
+        'Tap receipts':host?.interaction_delivery,
+        'Error':rig.error || device?.display_fault || device?.touch_fault || host?.delivery_fault || 'None'});
+      section.append(detail); return section;
+    }));
+  } catch(error) {
+    fields(el('obs'), {'Connection':'Overview connection lost','Error':error.message});
+    el('obs-panel').className='stale';
+    for(const section of el('rigs').children)section.className='stale';
+  }
+}
+el('install').onclick=async()=>{
+  try {
+    const response=await fetch('/api/install',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+el('token').value},
+      body:JSON.stringify({rig:el('target').value,release:el('release').value})});
+    const value=await response.json(); if(!response.ok)throw Error(value.error); await refresh();
+  } catch(error) { el('job').textContent=error.message; }
+};
+async function poll(){await refresh();setTimeout(poll,2000);} poll();
+</script>
+</html>

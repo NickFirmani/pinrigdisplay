@@ -1,4 +1,5 @@
 """One rig's source evidence and serialized display command writer."""
+from .identity import software_identity
 import threading
 import time
 from pinrig_protocol.commands import Command, identifier
@@ -10,6 +11,7 @@ OBS_VALID_FOR = 8.
 
 class Authority:
     def __init__(self, rig: str, client, *, clock=time.monotonic):
+        self.software = software_identity()
         self.rig = identifier(rig, 'rig')
         self.client = client
         self.clock = clock
@@ -65,10 +67,11 @@ class Authority:
             'operation': 'show_message', 'params': params}).params
         with self.sender_lock:
             reply = self.client.send('show_message', params, request_id=request_id)
-            if reply.get('ok') and request_id not in self.message_details:
-                self.message_details[request_id] = dict(params)
-                if len(self.message_details) > 64:
-                    del self.message_details[next(iter(self.message_details))]
+            with self.lock:
+                if reply.get('ok') and request_id not in self.message_details:
+                    self.message_details[request_id] = dict(params)
+                    if len(self.message_details) > 64:
+                        del self.message_details[next(iter(self.message_details))]
             return reply
 
     def clear(self, message_id: str) -> dict:
@@ -78,8 +81,13 @@ class Authority:
 
     def status(self) -> dict:
         resolution = self.resolution()
-        with self.sender_lock:
-            host = self.client.send('status', {})
+        host = self.client.send('status', {})
+        with self.lock:
             details = dict(self.message_details)
-        return {'message_details': details, 'rig': self.rig, 'state': resolution.state, 'reason': resolution.reason,
+            now = self.clock()
+            ages = {name: max(0., now - item.observed_at) for name, item in self.observations.items()}
+            sources = {name: {'age': ages[name], 'live': item.live, 'active': item.local_use,
+                'fresh': now < self.obs_until if name == 'obs' else ages[name] <= SOURCE_MAX_AGE}
+                for name, item in self.observations.items()}
+        return {'status_schema': 1, **self.software, 'source_ages': ages, 'sources': sources, 'message_details': details, 'rig': self.rig, 'state': resolution.state, 'reason': resolution.reason,
                 'host': host, 'state_delivery': self.last_delivery}
