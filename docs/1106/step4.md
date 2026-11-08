@@ -1,66 +1,106 @@
-# Architecture Definition
+# 4. Install, monitor, and diagnose by layer
 
-Production, following the owner's explicit diagram:
+Execution details and repository gaps: [implementation plan](step4-implementation.md).
+
+Production:
 
 ```text
-OBS PC → two independent [Armbian tiny PC → USB → Pico 2 W → SPI → display]
+Host/stream PC (OBS) → two independent rig PCs (Armbian) → USB → Pico 2 W → SPI → display
 ```
 
 Home testing:
 
 ```text
-This PC → Pi 4B → USB → Pico 2 W → SPI → display
+This PC (source) → rig PC (Pi 4B) → USB → Pico 2 W → SPI → display
 ```
 
-The Pi 4B is still a supported test host. The Pico is the display controller; the Linux computer
-is the host. Keep those names distinct. Keep source interpretation on the PCs.
-Confirm the OBS PC OS and home source/test method before writing OS-specific
-install commands; the existing Debian/systemd instructions are not proof of
-the actual stream-PC OS. Do not invent hostnames or require a second home rig.
+Organize implementation and documentation into three layers. Here, **display**
+means the Pico controller and attached panel; **rig PC** means its Linux host;
+**host/stream PC** means the upstream source/OBS computer. Keep source
+interpretation on the PCs and share the command contract with the firmware.
+Each PC provides monitoring and installation for the layer below it.
 
-## 4. Install, reflash, and diagnose without guesswork
+## Display
 
-Provide a supported release bundle containing matching Pico code/assets and
-version information. A user should not assemble a staging directory, discover
-hidden imports, or build fonts merely to install the display.
+- Run the firmware, render commands, and report firmware version, displayed
+  state, and actionable faults over USB. Keep command acceptance, rendering,
+  and person acknowledgement distinct.
+- Provide a complete, versioned release with matching runtime, code, and assets.
+  Installing must not require building fonts, discovering imports, or assembling
+  a staging directory. Distinguish a runtime UF2 from a complete application.
+- Provide no webpage or installer of its own. The rig PC owns firmware
+  installation and monitoring.
 
-Write one numbered path per machine, with commands labeled by where they run,
-the few required values collected once, expected output, and a short recovery
-step. Provide separate first-install and update sections. Proposed tooling must
-be implemented and tested before instructions present it as available.
+## Rig PC
 
-| Machine | Required operator workflow |
-| --- | --- |
-| Pico/display | Connect USB; enter BOOTSEL if needed; install the chosen runtime and complete release; reset; verify UNKNOWN and version. Distinguish a runtime UF2 from a complete application install. |
-| Armbian host / home Pi 4B | Install prerequisites and one rig service; select the detected USB device; configure rig identity/source endpoints; start service; open status page. Detect an existing service account so rerunning setup works. |
-| OBS PC / home source PC | Enable/configure OBS WebSocket when used; install and start the producer; select one or two host destinations and scene mappings; show connection and delivery status. Use instructions matching its actual OS. |
+- Run one rig service that owns USB communication with its display.
+- Host a rig webpage showing rig identity and software version, USB connection,
+  firmware version and health, displayed state, source freshness, tap-storage
+  status, and the last actionable error.
+- Install, update, and reflash display firmware from that webpage, with release
+  selection, progress, failure details, and post-install version/health checks.
+  Explain any physical BOOTSEL action required. Suspend normal USB ownership
+  during uploads and restore the service afterward, including on failure.
+- Expose versioned health/status information to the host/stream PC, including
+  timestamps so it can identify stale reports.
+- Support both production Armbian machines and the home Pi 4B. Setup must detect
+  an existing service account, select the USB device, collect rig identity and
+  source settings once, and support reruns.
 
-Make clean reinstallation the recovery path. No mandatory device backup,
-receipt migration, or old-environment restoration workflow. Reflashing may
-discard pending messages and unconfirmed tap receipts; say this once plainly.
-Distinguish that deliberate maintenance reset from ordinary reconnect/restart,
-where existing durable receipt guarantees should continue to work. Still stop
-the USB-owning host service during uploads and restart it afterward.
+## Host/stream PC
 
-Expand the existing booth/status view rather than creating another service:
-show OBS connection/authentication status, current program scene and streaming
-state, last fresh observation age, per-rig report success, videonode status,
-USB connection, installed versions, displayed state, and actionable last error.
-Some of these fields require new producer/status data; they are not currently
-available just by relabeling the UI. Never display credentials.
+- Run the producer and interpret OBS/source state. Support one or more rig
+  destinations, with independent connection and delivery status.
+- Host the overview webpage, expanding the existing booth/status view. Show
+  each rig's reachability, report age, rig software version, display firmware
+  version and health, and a link to its rig webpage.
+- Show OBS connection/authentication, current program scene, streaming state,
+  last fresh observation age, per-rig delivery, videonode status, and actionable
+  errors. Never display credentials.
+- Provide installation and update controls for rig PC software, with progress,
+  failure reporting, and post-install version/health checks. Link to each rig
+  webpage for display firmware installation.
+- Confirm the actual stream-PC OS and home source/test method before writing
+  OS-specific setup instructions. Existing Debian/systemd instructions do not
+  establish the stream-PC OS. Do not invent hostnames or require a second home rig.
 
-Include explicit checks for OBS closed, wrong password, unrecognized scene,
-one unreachable rig, USB unplug, stale source, firmware fault, and failed tap
-storage. Distinguish process running, source fresh, command accepted, display
-rendered, and person acknowledged. Explain where logs live and give one command
-to read them on each supported OS.
+## Installation and recovery
 
-Documentation target: README about one screen with topology and entry links;
-one installation/update guide; one short operation/troubleshooting guide;
-one protocol reference; one wiring reference. Link to details instead of
-repeating them. Remove obsolete plans after extracting still-needed decisions.
+Provide separate first-install and update paths for each PC, with numbered
+steps labeled by where they run, required values collected once, expected
+results, and short recovery instructions. Include the initial bootstrap needed
+before either webpage is available. Proposed controls and status fields must
+be implemented and tested before documentation presents them as available;
+some require new producer, rig, and firmware reporting.
 
-Done when a person can install from a clean machine, update, reflash, and find
-the cause of a disconnected display using only the guide. Validate first on
-the home chain, then both production rigs. Test installer reruns and failure
-messages, producer single/two-destination behavior, and status freshness.
+Use clean reinstallation as the recovery path. No mandatory backup, receipt
+migration, or restoration of old environments. Reflashing may discard pending
+messages and unconfirmed tap receipts; ordinary reconnects and restarts must
+preserve existing durable receipt guarantees.
+
+For home hardware validation, the Pico is connected to `admin@media-pi.local`.
+Old firmware need not be backed up and existing state on that Pi may be cleared.
+Exercise display states slowly in a loop.
+
+## Verification and documentation
+
+Distinguish process running, source fresh, command accepted, display rendered,
+and person acknowledged. Mark missing or stale reports clearly; a running
+service alone does not establish display health.
+
+Check OBS closed, wrong password, unrecognized scene, one unreachable rig,
+USB unplug, stale source, firmware fault, failed tap storage, and failed
+installation. Explain where logs live and provide one command to read them on
+each supported OS.
+
+Keep README to about one screen with topology and entry links. Maintain one
+installation/update guide, one short operation/troubleshooting guide, one
+protocol reference, and one wiring reference. Link instead of repeating details;
+remove obsolete plans after extracting still-needed decisions.
+
+Done when a person can bootstrap clean machines, use the host webpage to
+monitor and update rig PCs, use each rig webpage to monitor and reflash its
+display, and diagnose a disconnected display using only the guides. Validate
+first on the home chain, then both production rigs. Test installer reruns and
+failure recovery, single/multiple-destination behavior, version reporting, and
+status freshness; run the full test suite before implementation is complete.

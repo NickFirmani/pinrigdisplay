@@ -116,3 +116,50 @@ requires_ack false). Legacy body/request_id-only requests retain title BOOTH,
 priority 8 and requires_ack true. IDs need not have a booth prefix.
 POST `/api/clear` accepts any valid `message_id`; cancellation is not acknowledgment.
 Example: `{"request_id":"notice-1","title":"Notice","body":"Ready","duration":12}`.
+
+
+## Monitoring and release identity
+
+Protocol `version: 1` identifies the command contract, not a software release.
+Pico status includes `firmware` (release, protocol, target, declared runtime and
+asset identity) and `runtime_version` (actual runtime major/minor/patch). Unbundled
+firmware reports an unknown release. Firmware status retains requested/displayed
+state and revisions, render/touch errors and receipt outcomes.
+
+Rig `GET /api/status` adds `status_schema: 1`, `software_version`,
+`software_release`, `source_ages`, and `sources` (age, freshness and evidence values) to existing authority/USB status. Embedded
+host status includes `device_status_age`, `device_status_stale`, and `maintenance`.
+A cached device snapshot remains diagnostic data after disconnect, marked stale.
+Ages are local monotonic durations, never timestamps to compare between machines.
+
+Rig `GET /api/releases` lists staged release directories; `GET /api/maintenance`
+returns the latest persistent job. `POST /api/firmware` takes `release`, `clean`
+and optional `runtime` booleans. Stream `GET /api/status` contains OBS diagnostics,
+independently aged rig reports and its latest deployment job. `POST /api/install`
+takes configured `rig` and staged software `release`. Maintenance requests require
+a configured Bearer maintenance token and reject cross-origin browser requests.
+They return an accepted job (202), with phases and final success/error polled via
+status. A restarted in-progress job becomes failed, never assumed successful.
+No credentials are returned. `/healthz` remains process presence only.
+
+
+### Rig software management API
+
+The independent `pinrig-manager` service (default port 48198) stays up across
+`pinrig-rig` updates. Every route requires the maintenance Bearer credential;
+browser requests must be same-origin. The stream configuration supplies each
+rig's explicit `management_url`.
+
+| Request | Contract |
+| --- | --- |
+| `GET /api/health` | Authenticated management schema/process check. |
+| `PUT /api/releases/RELEASE` | `application/x-tar`, bounded Content-Length (64 MiB maximum). Regular files only; traversal, links, duplicate paths, unlisted files and checksum failures are rejected. Existing release contents are immutable. |
+| `POST /api/install` | JSON `{"release":"RELEASE"}`; returns 202 and a persistent job ID. One installation at a time. |
+| `GET /api/maintenance` | Latest persisted job, for recovery after a lost install response or overview restart. |
+| `GET /api/jobs/ID` | Returns the matching job's phase, running/succeeded/failed state and result/error. Unknown IDs return 404. |
+
+The rig invokes a fixed root-owned installer and local configuration. Uploaded
+installer code is never executed; application packages install as the service
+account. Management code upgrades require local bootstrap. Firmware and software
+updates share the existing rig installation lock. The overview uploads, starts
+the job, polls this API, then verifies the rig's identity and installed release.

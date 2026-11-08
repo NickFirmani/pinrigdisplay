@@ -18,6 +18,8 @@ Confirm the OBS PC OS and home source/test method before writing OS-specific
 install commands; the existing Debian/systemd instructions are not proof of
 the actual stream-PC OS. Do not invent hostnames or require a second home rig.
 
+We will work this on the pico/locally - the pico is connected locally to ssh admin@media-pi.local . Do not backup old firmware - any state on the media-pi can and should be cleared as well. Test the states slowly in a loop
+
 ## 3. Rework message presentation
 
 Use two stable layouts: full sign, and compact sign above a fixed message card.
@@ -25,6 +27,8 @@ Start with immediate appearance/disappearance. Remove smooth scaling/fading as
 a requirement; there is no need to simulate smooth animation in four large jumps.
 Compose the final regions without first erasing the message area with a full
 background image. Avoid redrawing an unchanged sign when replacing card text.
+
+When a message is displayed, the barberpole animation on the card should stop for simplicity, (and resume when the message(s) is dismissed)
 
 Use physical examples: short message, 240-character booth message, long word,
 newlines, unsupported characters, acknowledgment prompt, queue replacement,
