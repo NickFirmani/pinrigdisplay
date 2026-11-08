@@ -34,13 +34,6 @@ def dirty_rectangles(frames, width=480, height=320):
     return result+list(active.values())
 
 
-def breathing_frames():
-    """Five subtle background levels; trim and text drawing stay fixed."""
-    levels=(.76,.772,.80,.828,.84)
-    return [encode_rgb565(PageRenderer().on_air(.78,background_level=level)).pixels
-            for level in levels]
-
-
 def grouped_rectangles(frames, tile=10):
     """Group changed pixels into tiles to trade a few bytes for fewer windows."""
     dirty=dirty_rectangles(frames)

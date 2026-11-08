@@ -164,12 +164,12 @@ class PageRenderer:
             self._unknown_image = canvas
         return self._unknown_image.copy()
 
-    def on_air(self, level: float, stripe_phase: int = 0, background_level: float | None = None) -> Image.Image:
+    def on_air(self, level: float, stripe_phase: int = 0) -> Image.Image:
         image = self._sign_housing(background="#100706", housing="#35100d",
                                    rim="#641a12", trim="#a94121", outline="#170706")
         draw = ImageDraw.Draw(image)
 
-        self._draw_lit_panel(draw, level, stripe_phase, background_level)
+        self._draw_lit_panel(draw, level, stripe_phase)
         return image
 
     @staticmethod
@@ -227,16 +227,15 @@ class PageRenderer:
         return image
 
     @staticmethod
-    def _draw_lit_panel(draw: ImageDraw.ImageDraw, level: float, stripe_phase: int = 0, background_level: float | None = None) -> None:
+    def _draw_lit_panel(draw: ImageDraw.ImageDraw, level: float, stripe_phase: int = 0) -> None:
         x0, y0, x1, y1 = ON_AIR_REGION
-        face_level = level if background_level is None else background_level
-        face = _scale_color((220, 49, 22), face_level)
+        face = _scale_color((220, 49, 22), level)
         edge = _scale_color((255, 130, 44), max(0.82, level))
         highlight = _scale_color((255, 176, 72), level)
 
         PageRenderer._panel_background(
             draw, face=face, edge=edge, highlight=highlight,
-            stripe=_scale_color((170, 30, 16), face_level),
+            stripe=_scale_color((170, 30, 16), level),
             stripe_phase=stripe_phase,
         )
 

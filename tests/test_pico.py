@@ -17,7 +17,7 @@ sys.modules.pop('commands')
 
 class Display:
     def __init__(self):self.fail=False;self.phases=[]
-    def render(self,state,message,height,phase,fault):
+    def render(self,state,message,phase,fault):
         if self.fail:raise OSError('SPI failed')
         self.phases.append(phase)
 
@@ -64,7 +64,7 @@ class PicoTests(unittest.TestCase):
         self.clock.advance(.5);self.device.tick()
         self.send('set_state','lost',state='unknown')
         self.assertEqual(self.device.visible['id'],'msg')
-        self.assertEqual(self.device.height,188)
+        self.assertEqual(self.device.status()['visible_message']['status'],'visible')
         self.assertTrue(self.msg('new',requires_ack=True)['ok'])
         self.send('set_state','recovery',state='on_air')
         self.assertEqual(self.device.visible['id'],'msg')
@@ -147,15 +147,6 @@ class PicoTests(unittest.TestCase):
         self.clock.advance(15)
         self.assertTrue(self.send('set_state','new',state='on_air')['ok'])
 
-    def test_pulse_freezes_during_layout(self):
-        self.state();self.clock.advance(1);self.device.tick();phase=self.display.phases[-1]
-        self.msg()
-        for duration in (.2,.3):
-            self.clock.advance(duration);self.device.tick()
-            self.assertEqual(self.display.phases[-1],phase)
-        self.clock.advance(.1);self.device.tick()
-        self.assertAlmostEqual(self.display.phases[-1],phase)
-
     def test_outbox_read_failure_disables_touch_but_preserves_sign(self):
         self.state()
         def fail():raise OSError('outbox unreadable')
@@ -166,14 +157,18 @@ class PicoTests(unittest.TestCase):
         self.assertEqual(status['touch_fault'],'outbox unreadable')
 
 
-    def test_message_holds_pulse_until_card_closes(self):
+    def test_barberpole_resumes_after_last_card_closes(self):
         self.state();self.clock.advance(1);self.device.tick()
         phase=self.display.phases[-1]
         self.msg(requires_ack=True)
         self.clock.advance(.5);self.device.tick()
         self.clock.advance(5);self.device.tick()
         self.assertEqual(self.display.phases[-1],phase)
+        self.msg('queued', requires_ack=True)
         self.send('cancel_message','cancel',message_id='msg')
+        self.clock.advance(1);self.device.tick()
+        self.assertEqual(self.display.phases[-1],phase)
+        self.send('cancel_message','cancel-next',message_id='queued')
         self.clock.advance(.5);self.device.tick()
         self.assertAlmostEqual(self.display.phases[-1],phase+.5)
         self.clock.advance(.1);self.device.tick()
@@ -219,11 +214,11 @@ class PicoLayoutTests(unittest.TestCase):
         hardware.lcd_cs=lambda value:None
         hardware.dc=lambda value:None
         msg={'id':'booth-unknown'}
-        hardware.render('unknown',msg,188,10,None)
+        hardware.render('unknown',msg,10,None)
         self.assertEqual(images,['assets/unknown-0-0.r'])
         self.assertEqual(windows,[(0,188,480,132)])
         self.assertEqual(writes,[480*132*2])
         self.assertEqual(cards,[msg])
-        hardware.render('unknown',None,320,20,None)
+        hardware.render('unknown',None,20,None)
         self.assertEqual(images[-1],'assets/unknown-3-0.r')
         self.assertEqual(len(writes),1)

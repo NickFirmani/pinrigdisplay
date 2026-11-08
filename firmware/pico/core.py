@@ -30,35 +30,21 @@ class Device:
         self.touch_available = True
         self.released = False
         self.gesture = None
-        self.height = self.start_height = self.target = 320
-        self.layout_at = clock()
         self.phase = 0.
-        self.previous_at = self.layout_at
-        self.was_moving = False
-        self.last_signature = None
+        self.previous_at = clock()
         self.last_render_seconds = 0.
         self.closed = False
-
-    def geometry(self, now):
-        return self.target
-
-    def layout(self, now):
-        target = 188 if self.visible else 320
-        if target != self.target:
-            self.gesture = None
-            self.target = target
 
     def finish(self, msg, outcome):
         self.gesture = None
         self.history.append((msg['id'], outcome))
         self.history = self.history[-16:]
 
-    def next_message(self, now):
+    def next_message(self):
         if self.visible is None and self.pending:
             # MicroPython sorting is not stable: use an explicit arrival sequence.
             self.pending.sort(key=lambda m: (-m['params']['priority'], m['order']))
             self.visible = self.pending.pop(0)
-        self.layout(now)
 
     def advance(self, now):
         if self.deadline is not None and now >= self.deadline:
@@ -66,11 +52,10 @@ class Device:
             self.state = 'unknown'
             self.diagnostic = 'Host command lease expired'
             self.revision += 1
-            self.layout(now)
         if self.visible and self.visible['expires'] is not None and now >= self.visible['expires']:
             self.finish(self.visible, 'expired')
             self.visible = None
-            self.next_message(now)
+            self.next_message()
 
     def handle(self, value):
         rid = value.get('request_id') if isinstance(value, dict) else None
@@ -130,7 +115,6 @@ class Device:
             else:
                 self.pending.append(msg)
             self.revision += 1
-            self.layout(now)
             return {'message_id':msg['id'],'text_policy':'verbatim; overflow ellipsis; unsupported glyphs shown as boxes'}
         if cmd.operation == 'cancel_message':
             mid = p['message_id']
@@ -144,7 +128,7 @@ class Device:
                     self.finish(found,'cancelled')
                 elif mid not in dict(self.history):
                     raise CommandError('not_found','unknown message')
-            self.next_message(now)
+            self.next_message()
             return {'message_id':mid,'status':dict(self.history)[mid]}
         if cmd.operation == 'confirm_interaction':
             try:
@@ -155,20 +139,17 @@ class Device:
         raise CommandError('invalid_request','unsupported operation')
 
     def render(self, now):
-        height = self.geometry(now)
-        moving = abs(height-self.target)>.01
-        if not moving and not self.was_moving and self.visible is None:
+        if self.visible is None:
             self.phase += max(0.,now-self.previous_at)
-        self.previous_at, self.was_moving = now,moving
-        self.height = height
+        self.previous_at = now
         try:
             started = self.clock()
-            self.display.render(self.state,self.visible,height,self.phase,self.touch_fault)
+            self.display.render(self.state,self.visible,self.phase,self.touch_fault)
             self.last_render_seconds = self.clock()-started
             self.displayed = self.state
             self.displayed_revision = self.revision
             self.fault = None
-            if self.visible and self.visible['status']=='opening' and not moving:
+            if self.visible and self.visible['status']=='opening':
                 self.visible['status']='visible'
                 if not self.visible['params']['requires_ack']:
                     self.visible['expires']=self.clock()+self.visible['params']['duration']
@@ -187,7 +168,7 @@ class Device:
             return
         if pressed:
             self.gesture = (self.visible['id'] if self.released and self.visible and
-                self.visible['status']=='visible' and abs(self.geometry(now)-self.target)<.01 and not self.fault else None)
+                self.visible['status']=='visible' and not self.fault else None)
             self.released = False
             return
         self.released = True
@@ -205,7 +186,7 @@ class Device:
         self.touch_fault=None
         self.finish(self.visible,kind)
         self.visible=None
-        self.next_message(now)
+        self.next_message()
         self.render(now)
 
     def status(self):

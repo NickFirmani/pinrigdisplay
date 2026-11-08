@@ -56,17 +56,6 @@ class MotionTests(unittest.TestCase):
             self.assertEqual(hw.motion_asset_state,'camera_active')
             self.assertEqual(assets.call_count,8)
 
-    def test_breathing_changes_only_inner_panel(self):
-        from tools.build_on_air_motion import breathing_frames
-        frames=breathing_frames()
-        self.assertEqual(len(set(frames)),5)
-        for frame in frames[1:]:
-            for y in range(320):
-                for x in range(480):
-                    if 38 <= x < 442 and 58 <= y < 262:continue
-                    i=(y*480+x)*2
-                    self.assertEqual(frame[i:i+2],frames[0][i:i+2])
-
     def test_grouped_patches_reconstruct_every_phase_jump(self):
         from tools.build_on_air_motion import grouped_rectangles
         from tools.build_on_air_motion import motion_frames

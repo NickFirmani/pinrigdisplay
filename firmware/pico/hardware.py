@@ -134,7 +134,7 @@ class Hardware:
             if p['requires_ack']:self.text('Tap to acknowledge',14,101,22)
         self.card_signature=signature
 
-    def render(self,state,msg,height,phase,fault):
+    def render(self,state,msg,phase,fault):
         step=0 if msg else 3
         signature=(state,step,msg['id'] if msg else None,fault)
         if signature==self.signature:
