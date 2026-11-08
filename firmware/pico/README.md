@@ -17,7 +17,7 @@ Wiring: [authoritative pinout](../../hardware/pinouts.md).
   priority is FIFO. Timers start after successful opening; requires-ack cards
   have no timed expiry. UNKNOWN and lease expiry preserve visible/queued cards,
   accept new messages and retain tap/clear behavior. The unknown logo shrinks
-  above a visible message, using the same four layout steps as the other signs.
+  above a visible message. All four states switch directly between layouts.
 - Touch is pressure-based, anywhere on screen. A fresh press/release binds to
   the visible, settled card. Eight acknowledgments persist via atomic LittleFS
   replacement with sync before success. Host confirmation removes each receipt.
@@ -28,10 +28,6 @@ Wiring: [authoritative pinout](../../hardware/pinouts.md).
   Accepted Unicode stays verbatim in command data; unsupported glyphs show boxes.
   Text wraps/ellipsizes at fixed font sizes. The acceptance response advertises
   this rendering policy.
-- The first firmware uses four pre-rendered layout sizes and three pulse levels
-  to stay within flash/RAM budgets. Pulse phase freezes during layout motion and while any message is visible;
-  it resumes only after the card closes.
-  It is not frame-for-frame equivalent to Pillow's continuous scaling.
 - USB is the only command transport in this port. Wi-Fi is not configured.
   Ctrl-C remains reserved for mpremote maintenance; the trusted host sends JSON,
   not raw REPL controls.
@@ -41,19 +37,21 @@ Physical acceptance additionally requires visual inspection, real taps, USB
 reconnect/host restart and a power cycle. API health cannot detect bad wiring or
 wrong physical pixels.
 
-When upgrading an earlier build, replace the generated assets together with the
-firmware: UNKNOWN now requires `unknown-0-0.r` through `unknown-3-0.r`. The old
-single UNKNOWN image is insufficient. Preserve `interactions.json`, stop the USB
-host for the upload, and run the attended acceptance checks in
-[deployment](../../docs/deployment.md) before event use.
+## Sign artwork and motion
 
-## Full-size sign barberpole experiment
+Each state has two base images at brightness level zero. `STATE-3-0.r` fills
+the 480 × 320 screen. When a message appears, the renderer reads the top 188
+rows of `STATE-0-0.r` and draws the message card in the remaining 132 rows.
+Replacing a card with the same sign updates only the card area.
 
-Build standard assets, then run `python -m tools.build_on_air_motion --output PATH`.
-Upload the generated `STATE-3-0.r` and four `STATE-motion-*.bin` files for
-`on_air`, `camera_active`, and `camera_inactive` into Pico `assets/`
-together with the firmware. All three full-size signs use four stationary-text stripe
-phases, 750 ms per step. Other layouts retain their previous behavior.
+ON AIR, CAMERA ACTIVE and CAMERA INACTIVE each use four barberpole phases
+(`STATE-motion-0.bin` through `STATE-motion-3.bin`), stepping every 750 ms
+while the sign fills the screen. The lettering stays still. Motion pauses while
+a card is visible and resumes after the last card closes. UNKNOWN stays static.
+
+The release builder packages eight base images, twelve motion files, two fonts
+and their metrics together. Build each release in a fresh directory and install
+the matching firmware and assets using the [deployment guide](../../docs/deployment.md).
 
 Changed pixels are grouped into 10-pixel tiles, merged horizontally into 78 / 61 / 67
 windows for ON AIR / ACTIVE / INACTIVE, respectively, sending
@@ -69,7 +67,6 @@ Status exposes the latest `motion_seconds` and successful image/motion payload
 bytes (excluding address commands and message-card writes). USB and touch are
 serviced between updates. Hardware timing and visual acceptance remain necessary.
 Synthetic testing renews a real state lease; stopping its source restores UNKNOWN.
-The breathing prototype is shelved.
 
 ACTIVE and INACTIVE stripe colors match ON AIR’s relative luminance contrast
 against the panel face at each brightness level, preserving their amber/blue hues.
