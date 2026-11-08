@@ -3,7 +3,6 @@ from pixels import decode
 import framebuf
 import gc
 import json
-import math
 import struct
 import io
 import time
@@ -137,18 +136,15 @@ class Hardware:
 
     def render(self,state,msg,height,phase,fault):
         step=0 if msg else 3
-        period={'on_air':4,'camera_active':3,'camera_inactive':6}.get(state,6)
-        level=round((1-math.cos(phase*2*math.pi/period)))
-        level=0
-        signature=(state,step,level,msg['id'] if msg else None,fault)
+        signature=(state,step,msg['id'] if msg else None,fault)
         if signature==self.signature:
             if state!='unknown' and step==3:self.animate_on_air(phase,state)
             return
         gc.collect()
         try:
             h=188 if msg else 320
-            if self.signature is None or self.signature[:3] != signature[:3]:
-                self.image('assets/%s-%d-%d.r'%(state,step,level),h)
+            if self.signature is None or self.signature[:2] != signature[:2]:
+                self.image('assets/%s-%d-0.r'%(state,step),h)
             if h<320:
                 self.make_card(msg,fault)
                 self.window(0,h,480,320-h)

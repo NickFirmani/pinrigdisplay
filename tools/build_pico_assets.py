@@ -43,17 +43,19 @@ def build(output):
     output.mkdir(parents=True, exist_ok=True)
     pages = PageRenderer()
     for state in ('on_air','camera_active','camera_inactive','unknown'):
-        for level in range(3 if state!='unknown' else 1):
-            if state=='unknown': sign=pages.unknown_status()
-            elif state=='on_air': sign=pages.on_air(.78+.11*level)
-            else: sign=pages.camera_status(active=state=='camera_active',level=.78+.11*level)
-            for step in range(4):
-                height=188+44*step
-                image=Image.new('RGB',(480,320),'#070f20')
-                scaled=sign.copy();scaled.thumbnail((480,height),Image.Resampling.LANCZOS)
-                image.paste(scaled,((480-scaled.width)//2,(height-scaled.height)//2))
-                raw=encode_rgb565(image).pixels
-                (output/f'{state}-{step}-{level}.r').write_bytes(pack_image(raw))
+        if state == 'unknown':
+            sign = pages.unknown_status()
+        elif state == 'on_air':
+            sign = pages.on_air(.78)
+        else:
+            sign = pages.camera_status(active=state == 'camera_active', level=.78)
+        for step, height in ((0, 188), (3, 320)):
+            image = Image.new('RGB', (480, 320), '#070f20')
+            scaled = sign.copy()
+            scaled.thumbnail((480, height), Image.Resampling.LANCZOS)
+            image.paste(scaled, ((480 - scaled.width) // 2, (height - scaled.height) // 2))
+            raw = encode_rgb565(image).pixels
+            (output / f'{state}-{step}-0.r').write_bytes(pack_image(raw))
     # Fixed-height proportional glyphs in MONO_HLSB format for framebuf.blit.
     metrics={}
     for size in (22,24):
