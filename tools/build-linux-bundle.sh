@@ -15,14 +15,22 @@ if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
     usage >&2
     exit 2
 fi
-if [ "$(uname -s)" != Linux ]; then
+host=$(uname -s)
+if [ "$host" != Linux ] && { [ "$host" != Darwin ] || [ "$role" != stream ]; }; then
     printf 'Build on a Linux host that matches the target.\n' >&2
+    if [ "$host" = Darwin ] && [ "$role" = rig ]; then
+        printf 'The rig bundle includes target-specific hardware dependencies.\n' >&2
+    fi
     exit 1
 fi
 
 root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 release=$1
-output=${2:-"$HOME/$role-$release"}
+if [ "$host" = Darwin ]; then
+    output=${2:-"$root/build/$role-$release"}
+else
+    output=${2:-"$HOME/$role-$release"}
+fi
 if [ ! -x "$root/.venv/bin/python" ]; then
     python3 -m venv "$root/.venv"
 fi

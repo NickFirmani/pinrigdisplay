@@ -5,6 +5,7 @@ from pathlib import Path
 import tarfile
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 from rig.manager import SoftwareInstaller, make_manager_handler, stage_release
 from shared.jobs import Jobs
@@ -102,7 +103,7 @@ class ManagerTests(unittest.TestCase):
 class BootstrapTests(unittest.TestCase):
     def test_bootstrap_keeps_management_code_separate_from_application(self):
         from tools.install_linux import setup_manager
-        with TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp, patch('tools.install_linux.check_listener'):
             root = Path(temp)
             (root / 'etc/systemd/system').mkdir(parents=True)
             calls = []

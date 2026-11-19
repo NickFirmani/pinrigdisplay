@@ -203,3 +203,7 @@ def main() -> None:
             if worker.ident is not None:
                 worker.join()
         jobs.wait()
+
+
+if __name__ == '__main__':
+    main()

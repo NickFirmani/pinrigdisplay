@@ -39,13 +39,23 @@ python3 -m venv .venv
 .venv/bin/python -m unittest discover -v
 ```
 
-## Refresh a rig checkout
-
-From the workstation, copy the source and then connect to the rig:
+## Actual installation
 
 ```sh
+# Clone the source
 git clone git@github.com:NickFirmani/pinrigdisplay.git
 cd pinrigdisplay
+
+# Copy the source to each rig and install
 tools/copy-source.sh streamrig@streamrig.lcp
 ssh streamrig@streamrig.lcp
+./pinrig/rig/installation/build.sh v1
+./pinrig/rig/installation/install.sh v1
+
+# Start the rig software
+./stream/installation/build.sh v1
+./stream/installation/install.sh v1
+
+# Open the webserver at 
+http://127.0.0.1:48195
 ```

@@ -1,7 +1,11 @@
 # Operation and diagnostics
 
-Start at the stream overview (default port 48195), then follow a rig link
-(default 48194) for display details, booth messages and firmware maintenance.
+Start at the stream overview (default port 48195). Each card shows the state
+reported by the Pico and when the report was sampled, in your browser's local
+time. Old reports are marked stale. Open **Rig status** for OBS and rig
+diagnostics or **Debugging** for display tests and rig software installation.
+Select a rig name to open its booth page (default port 48194) for messages and
+firmware maintenance.
 
 In the home topology, run `pinrig-stream` on the development PC. The Pi 4B runs
 only `pinrig-rig` and the independent `pinrig-manager`; it simulates one of the
@@ -9,9 +13,9 @@ small production rig hosts rather than the OBS/stream PC.
 
 ## Display test pane
 
-The stream overview can apply a display test override to one rig on the trusted
-local network. Choose ON AIR, CAMERA ACTIVE, CAMERA INACTIVE or UNKNOWN and inspect
-the rig health card while observing the physical panel. The rig remains the sole
+In the stream overview's **Debugging** tab, apply a display test override to one
+rig. Choose ON AIR, CAMERA ACTIVE, CAMERA INACTIVE or UNKNOWN and check the
+rig card while observing the physical panel. The rig remains the sole
 owner of USB delivery. It reports the active override and its remaining time,
 continues collecting OBS and videonode evidence underneath it, and returns to
 automatic resolution after 60 seconds or when **Return to automatic** is used.
@@ -19,6 +23,40 @@ automatic resolution after 60 seconds or when **Return to automatic** is used.
 Test overrides are intentionally transient and are not a substitute for source
 integration tests. A rig-service restart also clears them; a lost producer lease
 still makes the Pico fall back to UNKNOWN.
+
+## Simulate videonode
+
+To check the rig's videonode connection without installing or running videonode,
+run this on the rig from the source checkout. The default address matches the
+rig's default `videonode_url` (`http://127.0.0.1:8090`).
+
+```sh
+python3 rig/videonode_simulator.py --interval 5
+```
+
+The simulator defaults to four streams (`camera1`, `camera2`, `camera3`, and
+`combined`) and sends consumer-count events plus heartbeats. Press `i` for all
+inactive, `1`–`4` to activate one stream, `a` to cycle automatically, or `m` to
+return to manual mode. In auto mode, a state key stops cycling and applies that
+manual state. Pass `--streams` to override the stream IDs, or adjust `--host`
+and `--port` to match a custom rig configuration. Press `q` to quit. The dashboard
+should show the videonode source changing between inactive and active.
+
+## Simulate OBS
+
+On the Stream PC, run this from the source checkout before starting
+`pinrig-stream`. The default WebSocket address matches the stream service's
+default `obs_url` (`ws://127.0.0.1:4455`).
+
+```sh
+python3 stream/obs_simulator.py --scenes "Rig 1,Rig 2,MEGA PINBALL,Intermission" --interval 5
+```
+
+This serves the OBS WebSocket v5 handshake and the two status requests used by
+PinRig. Press `1`–`4` to select a program scene, `s` to toggle streaming, `a` to
+cycle scenes and streaming state automatically, or `m` to return to manual
+mode. In auto mode, a state key stops cycling and applies that manual state.
+Pass the exact scene names configured for the rigs. Press `q` to quit.
 
 ## Booth messages
 

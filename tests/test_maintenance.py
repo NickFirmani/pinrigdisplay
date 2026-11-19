@@ -254,7 +254,10 @@ class DeploymentTests(unittest.TestCase):
                 if 'venv' in args:
                     Path(args[-1]).mkdir(parents=True, exist_ok=True)
             config = {'id': 'a', 'serial': '/dev/test'}
-            with patch('tools.install_linux.os.geteuid', return_value=0), patch('tools.install_linux.os.chown') as ownership, patch('tools.install_linux.pwd.getpwnam', return_value=SimpleNamespace(pw_uid=100, pw_gid=100)):
+            with (patch('tools.install_linux.os.geteuid', return_value=0),
+                  patch('tools.install_linux.os.chown') as ownership,
+                  patch('tools.install_linux.pwd.getpwnam', return_value=SimpleNamespace(pw_uid=100, pw_gid=100)),
+                  patch('tools.install_linux.check_listener') as check):
                 install(bundle, config, root=root, runner=runner, verify=lambda *a: None, management=False)
                 receipt = root / 'var/lib/pinrig-rig/interactions.sqlite3'
                 receipt.write_text('durable receipt')
@@ -275,6 +278,55 @@ class DeploymentTests(unittest.TestCase):
                 wheel_install, = [call for call in package_calls if 'install' in call]
                 self.assertEqual(wheel_install[-1], 'pinrig-rig')
                 self.assertTrue((root / 'opt/pinrig-rig/current').is_symlink())
+                check.assert_called_with('0.0.0.0', 48194)
+
+
+class ListenerReplacementTests(unittest.TestCase):
+    def test_listener_owners_match_system_service_cgroups(self):
+        from unittest.mock import patch
+        from tools.install_linux import listener_owners
+        output = ('LISTEN 0 8 0.0.0.0:48194 0.0.0.0:* users:(("python3",pid=42,fd=3))\n'
+                  'LISTEN 0 8 127.0.0.1:48194 0.0.0.0:* users:(("python3",pid=43,fd=3))\n'
+                  'LISTEN 0 8 127.0.0.2:48194 0.0.0.0:* users:(("python3",pid=44,fd=3))\n')
+        with TemporaryDirectory() as temp:
+            proc = Path(temp)
+            for pid, group in ((42, '0::/system.slice/pinrig-host.service'),
+                               (43, '0::/user.slice/pinrig-host.service'),
+                               (44, r'0::/system.slice/system-pinrig\x2dhost.slice/pinrig-host@other.service')):
+                (proc / str(pid)).mkdir()
+                (proc / str(pid) / 'cgroup').write_text(group + '\n')
+            with patch('tools.install_linux.subprocess.check_output', return_value=output):
+                self.assertEqual(listener_owners(48194, proc=proc),
+                                 {'pinrig-host.service', 'PID 43', 'pinrig-host@other.service'})
+
+    def test_reclaims_port_from_legacy_units_and_named_instances(self):
+        from errno import EADDRINUSE
+        from unittest.mock import Mock, call, patch
+        from tools.install_linux import prepare_listener
+        for owner in ('pinrig-host.service', 'pinrig-host-display2.service', 'pinrig-host@other.service'):
+            with (self.subTest(owner=owner),
+                  patch('tools.install_linux.check_listener',
+                        side_effect=[OSError(EADDRINUSE, 'busy'), None]) as check,
+                  patch('tools.install_linux.listener_owners', return_value={owner}),
+                  patch('builtins.print')):
+                runner = Mock()
+                prepare_listener('pinrig-rig.service', '0.0.0.0', 48194, runner)
+                self.assertEqual(runner.call_args_list, [call('systemctl', 'stop', owner),
+                                                        call('systemctl', 'disable', owner)])
+                self.assertEqual(check.call_args_list, [call('0.0.0.0', 48194)] * 2)
+
+    def test_mixed_port_owners_do_not_stop_any_service(self):
+        from errno import EADDRINUSE
+        from unittest.mock import Mock, patch
+        from tools.install_linux import prepare_listener
+        for other in ('nginx.service', 'pinrig-stream.service', 'pinrig-hostile.service'):
+            with (self.subTest(other=other),
+                  patch('tools.install_linux.check_listener', side_effect=OSError(EADDRINUSE, 'busy')),
+                  patch('tools.install_linux.listener_owners', return_value={'pinrig-host-display2.service', other})):
+                runner = Mock()
+                with self.assertRaisesRegex(OSError, '48194.*' + other):
+                    prepare_listener('pinrig-rig.service', '0.0.0.0', 48194, runner)
+                runner.assert_not_called()
 
 
 class MaintenanceHTTPTests(unittest.TestCase):
@@ -303,6 +355,23 @@ class MaintenanceHTTPTests(unittest.TestCase):
             self.assertEqual(self.request(handler, '/api/firmware',
                                           {'release': '..', 'clean': False})[0], 422)
             self.assertEqual(self.request(handler, '/api/maintenance')[0], 200)
+
+    def test_overview_places_display_cards_above_status_and_debugging(self):
+        from stream.overview import handler
+
+        with TemporaryDirectory() as temp:
+            status = Status([{'id': 'a', 'url': 'http://a'}])
+            handle = handler(status, Jobs(Path(temp) / 'jobs.json'), None)
+            code, body = self.request(handle, '/')
+        self.assertEqual(code, 200)
+        overview, status_panel = body.split(b'id="status-panel"', 1)
+        status_panel, debugging = status_panel.split(b'id="debug-panel"', 1)
+        self.assertLess(overview.index(b'id="rig-cards"'), overview.index(b'role="tablist"'))
+        self.assertIn(b'id="obs-panel"', status_panel)
+        self.assertIn(b'id="rigs"', status_panel)
+        self.assertIn(b'aria-labelledby="debug-tab" tabindex="0" hidden', debugging)
+        self.assertIn(b'id="test-apply"', debugging)
+        self.assertIn(b'id="install"', debugging)
 
     def test_overview_routes_and_rejected_installs(self):
         from stream.overview import handler
@@ -407,8 +476,16 @@ class ServiceVerificationTests(unittest.TestCase):
         _, clock, _ = device()
         def get(url):
             raise OSError('service crashed')
-        with self.assertRaisesRegex(OSError, 'inspect journalctl'):
+        with self.assertRaisesRegex(OSError, r'48194/api/status.*service crashed.*journalctl -u pinrig-rig'):
             verify_service('rig', {'id': 'a'}, 'new', get=get, clock=clock, delay=clock.advance)
+
+    def test_startup_failure_reports_identity_mismatch_on_configured_port(self):
+        from tools.install_linux import verify_service
+        _, clock, _ = device()
+        with self.assertRaisesRegex(OSError, r'48196/api/status.*new.*reported release .old., rig .other.'):
+            verify_service('rig', {'id': 'a', 'port': 48196}, 'new',
+                           get=lambda _: {'software_release': 'old', 'rig': 'other'},
+                           clock=clock, delay=clock.advance)
 
 class CachedStatusTests(unittest.TestCase):
     def test_polling_status_during_usb_work_does_not_report_sender_busy(self):

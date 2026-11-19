@@ -148,6 +148,27 @@ The setup creates/reuses `pinrigdisplay`, stages a versioned venv under
 For failure, inspect `journalctl -u pinrig-stream -n 100 --no-pager`, correct the
 reported prerequisite/configuration issue, then rerun the installer.
 
+## Run the stream app locally
+
+From the checkout on a development computer, run:
+
+```sh
+cd stream
+./install.sh
+./run.sh
+```
+
+The first run prompts for OBS and rig settings and saves them to
+`~/stream-config.json`. The app listens on `127.0.0.1:48195`; open
+`http://127.0.0.1:48195`. Pass a config path as the first argument to `run.sh`
+to use a different file. The local runner uses the checkout directly, so source
+changes take effect on the next restart.
+
+On macOS, `stream/installation/install.sh RELEASE` is also accepted as a
+shortcut to prepare this local environment; the release name is not used on
+macOS. A Linux release install still validates and installs the named bundle
+through the Linux service installer.
+
 For home testing, the development PC is the stream PC and `media-pi` is the rig
 host. Do not also run `pinrig-stream` on `media-pi`; one stream authority should
 report OBS evidence for the configured rigs. The Pi continues to run
@@ -177,6 +198,13 @@ After installation, run:
 ```sh
 rig/installation/test.sh
 ```
+
+If a previous PinRig system service for the same role occupies the configured
+port, the installer stops it before starting the replacement and disables the
+superseded unit. This includes named instances such as `pinrig-host-display2.service`.
+On a bind conflict it uses `ss` from `iproute2` to identify the listener.
+If an unrelated or unidentified process owns the port, the installer reports
+the conflict so you can choose another port or free it yourself.
 
 Open the rig page at `http://ACTUAL_RIG_ADDRESS:48194`. Once all rigs are set up,
 run `stream/installation/test.sh` on the stream PC. Allow the stream PC to reach the
@@ -237,6 +265,15 @@ builder with the same userspace architecture, distribution, and Python
 major/minor version. Build one bundle per role and target platform. Two matching
 rigs can use the same rig bundle with their own config files. The build downloads
 wheels so installation can run fully offline.
+
+The stream bundle can also be built directly on macOS: its dependencies are
+pure Python, and the builder rejects platform-specific wheels. By default it
+writes to `build/stream-RELEASE`. Rig bundles still need a matching Linux host
+because they include hardware-oriented dependencies.
+
+The stream role can also be built on macOS because its dependencies are pure
+Python. Its builder rejects any platform-specific wheel. The rig bundle still
+needs a matching Linux host because it includes hardware dependencies.
 
 From the workstation, run the matching build script over SSH. Choose a new
 release name for each distinct build. The script creates the build venv if

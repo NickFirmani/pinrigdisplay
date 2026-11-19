@@ -1,4 +1,4 @@
-"""Build an offline Linux wheelhouse for one role on its target platform."""
+"""Build an offline Linux wheelhouse for a role and supported host platform."""
 import argparse
 import hashlib
 import json
@@ -22,6 +22,15 @@ def build(output: Path, release: str, role: str) -> None:
     wheels.mkdir()
     subprocess.run([sys.executable, '-m', 'pip', 'wheel', '--wheel-dir', str(wheels),
                     str(root / 'shared'), str(root / role)], check=True)
+
+    # A Mac can produce a Linux stream bundle only while all payload wheels are
+    # platform independent. The rig role must be built for its Linux target.
+    if sys.platform == 'darwin' and role == 'stream':
+        incompatible = [path.name for path in wheels.glob('*.whl')
+                        if not path.name.endswith('-py3-none-any.whl')]
+        if incompatible:
+            raise ValueError('macOS can build a Linux stream bundle only from pure-Python wheels; '
+                             'platform-specific wheels found: ' + ', '.join(incompatible))
 
     # Embed the same validator in the standalone bootstrap used before pip runs.
     installer = (root / 'tools/install_linux.py').read_text()

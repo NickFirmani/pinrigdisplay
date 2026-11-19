@@ -1,5 +1,6 @@
 """Root-only, rerunnable Linux installation from a verified offline wheelhouse."""
 import argparse
+import errno
 import hashlib
 import json
 import os
@@ -7,13 +8,21 @@ from pathlib import Path
 import pwd
 import re
 import shutil
+import socket
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
 import time
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, build_opener
 
 from shared.release_manifests.software import SOFTWARE_ROLES, validate_software
+
+
+SERVICE_FAMILIES = {
+    'pinrig-rig.service': ('pinrig-rig', 'pinrig-host', 'display-controller'),
+    'pinrig-stream.service': ('pinrig-stream', 'pinrig-obs'),
+    'pinrig-manager.service': ('pinrig-manager',),
+}
 
 
 def run(*args):
@@ -23,16 +32,78 @@ def run(*args):
 def install_wheels(venv: Path, bundle: Path, package: str, runner, *, as_service_user: bool = False) -> None:
     """Install only from the local wheelhouse, ignoring the host's pip settings."""
     command = ('env', 'PIP_CONFIG_FILE=/dev/null', str(venv / 'bin/pip'), '--isolated',
-               'install', '--no-index', '--only-binary=:all:', '--find-links', str(bundle / 'wheels'))
+               'install', '--no-cache-dir', '--no-index', '--only-binary=:all:', '--find-links', str(bundle / 'wheels'))
     if as_service_user:
         runner('runuser', '-u', 'pinrigdisplay', '--', *command, package)
     else:
         runner(*command, '--upgrade', '--force-reinstall', package)
 
 
-def get_json(url: str | Request) -> dict:
-    with urlopen(url, timeout=2) as response:
-        return json.loads(response.read(1024 * 1024))
+def check_listener(bind: str, port: int) -> None:
+    """Probe with the same IPv4 bind and address reuse as the HTTP service."""
+    with socket.socket() as listener:
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind((bind, port))
+
+
+def listener_owners(port: int, *, proc: Path = Path('/proc')) -> set[str]:
+    """Resolve listening PIDs to system service units, retaining unknown owners."""
+    output = subprocess.check_output(['ss', '-H', '-ltnp', f'sport = :{port}'],
+                                     text=True, timeout=5)
+    owners = set()
+    for line in output.splitlines():
+        pids = re.findall(r'\bpid=(\d+)\b', line)
+        if not pids:
+            owners.add('unidentified listener')
+        for pid in pids:
+            try:
+                cgroup = (proc / pid / 'cgroup').read_text()
+            except OSError:
+                cgroup = ''
+            unit = re.search(r'(?m)^\d+:[^:\n]*:/system\.slice/(?:[^/\n]+\.slice/)*'
+                             r'([^/\n]+\.service)(?:/|$)', cgroup)
+            owners.add(unit[1] if unit else f'PID {pid}')
+    return owners
+
+
+def prepare_listener(unit: str, bind: str, port: int, runner) -> None:
+    """Reclaim a conflicting listener only if every owner is a known predecessor."""
+    try:
+        check_listener(bind, port)
+        return
+    except OSError as error:
+        if error.errno != errno.EADDRINUSE:
+            raise OSError(f'{unit} cannot bind to {bind}:{port}: {error}') from error
+
+    try:
+        owners = listener_owners(port)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise OSError(f'{unit} cannot bind to {bind}:{port}; could not identify the listener with ss: {error}') from error
+    families = '|'.join(re.escape(name) for name in SERVICE_FAMILIES[unit])
+    service = re.compile(rf'(?:{families})(?:[-@](?:[A-Za-z0-9_.@-]|\\x[0-9a-fA-F]{{2}})+)?\.service')
+    if not owners or any(not service.fullmatch(owner) for owner in owners):
+        who = ', '.join(sorted(owners)) or 'unidentified listener'
+        raise OSError(f'{unit} cannot bind to {bind}:{port}; port is in use by {who}. '
+                      'Free the port or configure a different one.')
+    for owner in sorted(owners):
+        print(f'Stopping {owner} to free {bind}:{port} for {unit}.', flush=True)
+        runner('systemctl', 'stop', owner)
+        if owner != unit:
+            runner('systemctl', 'disable', owner)
+    try:
+        check_listener(bind, port)
+    except OSError as error:
+        raise OSError(f'{unit} still cannot bind to {bind}:{port} after stopping '
+                      f'{", ".join(sorted(owners))}: {error}') from error
+
+
+def get_json(url: str) -> dict:
+    # These are host-local service checks, even when the listener uses a LAN IP.
+    with build_opener(ProxyHandler({})).open(url, timeout=2) as response:
+        value = json.loads(response.read(1024 * 1024))
+    if not isinstance(value, dict):
+        raise ValueError('expected a JSON object')
+    return value
 
 
 def verify_service(role: str, config: dict, release: str, *, get=get_json, clock=time.monotonic, delay=time.sleep) -> None:
@@ -41,16 +112,28 @@ def verify_service(role: str, config: dict, release: str, *, get=get_json, clock
     if bind in ('0.0.0.0', '::'):
         bind = '127.0.0.1'
     port = config.get('port', 48194 if role == 'rig' else 48195)
+    url = f'http://{bind}:{port}/api/status'
+    expected_rig = config['id'] if role == 'rig' else None
+    expected = f'release {release!r}'
+    if expected_rig is not None:
+        expected += f', rig {expected_rig!r}'
     deadline = clock() + 30
+    problem = 'no response'
     while clock() < deadline:
         try:
-            status = get('http://%s:%s/api/status' % (bind, port))
-            if status.get('software_release') == release and (role != 'rig' or status.get('rig') == config['id']):
+            status = get(url)
+            reported_release = status.get('software_release')
+            reported_rig = status.get('rig')
+            if reported_release == release and (expected_rig is None or reported_rig == expected_rig):
                 return
-        except (OSError, ValueError):
-            pass
+            problem = f'reported release {reported_release!r}'
+            if expected_rig is not None:
+                problem += f', rig {reported_rig!r}'
+        except (OSError, ValueError) as error:
+            problem = str(error)
         delay(.5)
-    raise OSError('installed service did not report its release; inspect journalctl -u pinrig-' + role)
+    raise OSError(f'{url} never confirmed {expected} ({problem}). '
+                  f'Run sudo journalctl -u pinrig-{role} -b -n 80 --no-pager')
 
 
 def validate_config(config: dict) -> str:
@@ -117,14 +200,17 @@ def setup_manager(bundle: Path, config: dict, root: Path, runner, *, verify=veri
     unit = root / 'etc/systemd/system/pinrig-manager.service'
     if unit.exists():
         runner('systemctl', 'stop', 'pinrig-manager.service')
+    bind = config.get('management_bind', config.get('bind', '0.0.0.0'))
+    port = config.get('management_port', 48198)
+    prepare_listener('pinrig-manager.service', bind, port, runner)
     runner(sys.executable, '-m', 'venv', str(base))
     install_wheels(base, bundle, 'pinrig-rig', runner)
     state = root / 'var/lib/pinrig-manager'
     state.mkdir(parents=True, exist_ok=True, mode=0o755)
     unit.write_text('[Unit]\nDescription=Pinrig software management API\nAfter=network.target\n'
         '[Service]\nUser=root\n'
-        'ExecStart=' + str(base / 'bin/pinrig-manager') + ' --bind ' + config.get('management_bind', config.get('bind', '0.0.0.0')) +
-        ' --port ' + str(config.get('management_port', 48198)) + '\nRestart=on-failure\nRestartSec=3\n'
+        'ExecStart=' + str(base / 'bin/pinrig-manager') + ' --bind ' + bind +
+        ' --port ' + str(port) + '\nRestart=on-failure\nRestartSec=3\n'
         'TimeoutStopSec=660\nUMask=0022\n[Install]\nWantedBy=multi-user.target\n')
     runner('systemctl', 'daemon-reload')
     runner('systemctl', 'enable', '--now', 'pinrig-manager.service')
@@ -185,6 +271,8 @@ def install(bundle: Path, config: dict, *, root: Path = Path('/'), runner=run, v
                 replacement.touch(mode=0o600)
                 replacement.write_text(current)
                 replacement.replace(env)
+    bind = config.get('bind', '0.0.0.0' if role == 'rig' else '127.0.0.1')
+    port = config.get('port', 48194 if role == 'rig' else 48195)
     if role == 'rig':
         if not re.fullmatch(r'[A-Za-z0-9_.:-]{1,64}', config['id']):
             raise ValueError('invalid rig identity')
@@ -192,8 +280,8 @@ def install(bundle: Path, config: dict, *, root: Path = Path('/'), runner=run, v
         if not serial.startswith('/dev/') or not re.fullmatch(r'[/A-Za-z0-9_.:-]+', serial):
             raise ValueError('select an actual /dev/serial/by-id device')
         runner('usermod', '-a', '-G', 'dialout', 'pinrigdisplay')
-        args = ['--rig', config['id'], '--serial', serial, '--bind', config.get('bind', '0.0.0.0'),
-                '--videonode-url', config.get('videonode_url', 'http://127.0.0.1:8090'), '--port', str(config.get('port', 48194))]
+        args = ['--rig', config['id'], '--serial', serial, '--bind', bind,
+                '--videonode-url', config.get('videonode_url', 'http://127.0.0.1:8090'), '--port', str(port)]
         if config.get('bootsel_mount'):
             args += ['--bootsel-mount', config['bootsel_mount']]
         entry = 'pinrig-rig'
@@ -201,7 +289,7 @@ def install(bundle: Path, config: dict, *, root: Path = Path('/'), runner=run, v
         settings = state / 'config.json'
         write_release_metadata(settings, json.dumps({'rigs': config['rigs'], 'obs_url': config.get('obs_url', 'ws://127.0.0.1:4455')}))
         os.chown(settings, account.pw_uid, account.pw_gid, follow_symlinks=False)
-        args = ['--config', str(settings), '--bind', config.get('bind', '127.0.0.1'), '--port', str(config.get('port', 48195))]
+        args = ['--config', str(settings), '--bind', bind, '--port', str(port)]
         entry = 'pinrig-stream'
     if any(not re.fullmatch(r'[A-Za-z0-9_./:=@-]+', arg) for arg in args):
         raise ValueError('invalid service argument')
@@ -218,6 +306,7 @@ def install(bundle: Path, config: dict, *, root: Path = Path('/'), runner=run, v
         unit = 'pinrig-' + role
         if (root / ('etc/systemd/system/' + unit + '.service')).exists():
             runner('systemctl', 'stop', unit + '.service')
+        prepare_listener(unit + '.service', bind, port, runner)
         for name in ('interactions.sqlite3', 'interactions.sqlite3-wal', 'interactions.sqlite3-shm', 'maintenance.json'):
             managed = state / name
             if managed.is_symlink():
