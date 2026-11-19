@@ -367,7 +367,10 @@ class MaintenanceHTTPTests(unittest.TestCase):
         overview, status_panel = body.split(b'id="status-panel"', 1)
         status_panel, debugging = status_panel.split(b'id="debug-panel"', 1)
         self.assertLess(overview.index(b'id="rig-cards"'), overview.index(b'role="tablist"'))
-        self.assertIn(b'id="obs-panel"', status_panel)
+        self.assertLess(status_panel.index(b'id="video-connections"'),
+                        status_panel.index(b'id="obs-connection"'))
+        self.assertLess(status_panel.index(b'id="obs-connection"'),
+                        status_panel.index(b'id="obs-panel"'))
         self.assertIn(b'id="rigs"', status_panel)
         self.assertIn(b'aria-labelledby="debug-tab" tabindex="0" hidden', debugging)
         self.assertIn(b'id="test-apply"', debugging)

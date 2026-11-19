@@ -26,6 +26,12 @@
   [role=tablist] { display:flex; flex-wrap:wrap; gap:8px; border-bottom:1px solid #34414d }
   [role=tab] { margin:0 0 8px; background:#303f4e; color:inherit }
   [role=tab][aria-selected=true] { background:#9bd5ff; color:#10202c }
+  .connection-summary h2 { margin:0 0 12px }
+  .connection-summary dl { margin:0 }
+  .connection-summary dd { font-weight:700 }
+  .connection-summary .available { color:#a7e5b9 }
+  .connection-summary .unknown { color:#f2cb88 }
+  .connection-summary .obs-connection { border-top:1px solid #34414d; padding-top:12px; margin-top:12px }
   .stale { border-color:#edb95d } .muted { color:#a8b6c4 }
   dl { display:grid; grid-template-columns:minmax(110px,1fr) 2fr; gap:8px 16px }
   dt { color:#a8b6c4 } dd { margin:0; overflow-wrap:anywhere } #job { overflow-wrap:anywhere }
@@ -35,7 +41,7 @@
   <div id="rig-cards" class="rig-cards" aria-label="Rig displays"><p class="muted">Connecting…</p></div>
   <div role="tablist" aria-label="Rig tools">
     <button type="button" role="tab" id="message-tab" aria-controls="message-panel" aria-selected="true">Message</button>
-    <button type="button" role="tab" id="status-tab" aria-controls="status-panel" aria-selected="false" tabindex="-1">Rig status</button>
+    <button type="button" role="tab" id="status-tab" aria-controls="status-panel" aria-selected="false" tabindex="-1">Status</button>
     <button type="button" role="tab" id="debug-tab" aria-controls="debug-panel" aria-selected="false" tabindex="-1">Debugging/settings</button>
   </div>
   <div role="tabpanel" id="message-panel" aria-labelledby="message-tab">
@@ -66,7 +72,12 @@
     </section>
   </div>
   <div role="tabpanel" id="status-panel" aria-labelledby="status-tab" tabindex="0" hidden>
-    <section id="obs-panel"><h2>OBS</h2><dl id="obs"><dt>Status</dt><dd>Connecting…</dd></dl></section>
+    <section class="connection-summary">
+      <h2>Connections</h2>
+      <dl id="video-connections"><dt>Videonode</dt><dd>Waiting for rig status</dd></dl>
+      <dl class="obs-connection"><dt>OBS connection</dt><dd id="obs-connection">Checking…</dd></dl>
+    </section>
+    <section id="obs-panel"><h2>OBS details</h2><dl id="obs"><dt>Status</dt><dd>Connecting…</dd></dl></section>
     <div id="rigs"></div>
   </div>
   <div role="tabpanel" id="debug-panel" aria-labelledby="debug-tab" tabindex="0" hidden>
@@ -284,6 +295,35 @@ function fields(target, values) {
     target.append(term,description);
   }
 }
+function videonodeConnection(rig) {
+  const video = rig.status?.sources?.videonode;
+  if (rig.stale) return ['Unknown · rig status unavailable', false];
+  if (!video) return ['Waiting for a report', false];
+  if (!video.fresh) return ['No recent report', false];
+  if (video.active == null) return ['Stream activity unknown', false];
+  return [video.active ? 'Active · streams in use' : 'Idle · no streams in use', true];
+}
+let connectionRigs = [];
+function updateConnections(rigs, obs) {
+  const videoRows = el('video-connections');
+  videoRows.replaceChildren();
+  if (!rigs.length) fields(videoRows, {'Videonode':'Rig status unavailable'});
+  for (const rig of rigs) {
+    const name = document.createElement('dt');
+    name.textContent = rigLabel(rig) + ' · Videonode';
+    const state = document.createElement('dd');
+    const [label, available] = obs ? videonodeConnection(rig) : ['Unknown · overview unavailable', false];
+    state.textContent = label;
+    state.className = available ? 'available' : 'unknown';
+    videoRows.append(name, state);
+  }
+  const connected = obs?.connected && !obs.stale;
+  const connection = el('obs-connection');
+  connection.className = connected ? 'available' : 'unknown';
+  connection.textContent = !obs ? 'Unknown · overview unavailable' :
+    connected ? 'Connected' : obs.connected ? 'No recent report' :
+    obs.error === 'No OBS observation' ? 'Checking…' : 'Disconnected';
+}
 function jobText(job) {
   return [job.state,job.phase,job.error,job.result?.release?'Installed '+job.result.release:''].filter(Boolean).join(' · ');
 }
@@ -292,6 +332,8 @@ async function refresh() {
     const response=await fetch('/api/status');
     if(!response.ok)throw Error('Overview unavailable');
     const data=await response.json();
+    connectionRigs = data.rigs;
+    updateConnections(connectionRigs, data.obs);
     updateCards(data.rigs, Date.now());
     fields(el('obs'), {'Connection':data.obs.stale?'Unavailable or stale':'Connected',
       'Program scene':data.obs.scene,'Streaming':data.obs.streaming==null?'Unknown':data.obs.streaming?'Live':'Stopped',
@@ -329,6 +371,7 @@ async function refresh() {
       section.append(detail); return section;
     }));
   } catch(error) {
+    updateConnections(connectionRigs, null);
     fields(el('obs'), {'Connection':'Overview connection lost','Error':error.message});
     el('obs-panel').className='stale';
     for(const section of el('rigs').children)section.className='stale';

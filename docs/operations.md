@@ -2,7 +2,7 @@
 
 Start at the stream overview (default port 48195). Each card shows the state
 reported by the Pico and when the report was sampled, in your browser's local
-time. Old reports are marked stale. Open **Rig status** for OBS and rig
+time. Old reports are marked stale. Open **Status** for OBS and rig
 diagnostics or **Debugging/settings** for display tests and rig software installation.
 Select a rig name to open its booth page (default port 48194) for messages and
 firmware maintenance. Set a nickname in **Debugging/settings** to show it as
@@ -12,6 +12,10 @@ nickname to show only the rig ID.
 In the home topology, run `pinrig-stream` on the development PC. The Pi 4B runs
 only `pinrig-rig` and the independent `pinrig-manager`; it simulates one of the
 small production rig hosts rather than the OBS/stream PC.
+
+**Status** starts with Videonode activity for each rig, followed by the
+OBS connection. Idle means Videonode reports zero stream consumers. OBS can
+show Connected while streaming is stopped. Detailed diagnostics follow below.
 
 ## Display test pane
 
