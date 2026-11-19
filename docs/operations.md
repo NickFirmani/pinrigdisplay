@@ -59,8 +59,10 @@ sudo journalctl -u pinrig-manager -n 100 --no-pager
 Maintenance state persists in `/var/lib/pinrig-stream/maintenance.json` and
 `/var/lib/pinrig-rig/maintenance.json`. Rig software jobs persist separately in
 `/var/lib/pinrig-manager/maintenance.json`, so they survive display-service restarts. Rig tap receipts live in
-`/var/lib/pinrig-rig/interactions.sqlite3`. Credentials belong in the root-readable
-`/etc/pinrig-{stream,rig}.env` files and are not returned by status APIs.
+`/var/lib/pinrig-rig/interactions.sqlite3`. If the upstream services require
+credentials, store `OBS_WEBSOCKET_PASSWORD` on the stream PC and
+`VIDEONODE_CREDENTIALS` on the corresponding rig in their root-readable
+`/etc/pinrig-{stream,rig}.env` files.
 
 ## Acceptance
 
@@ -95,9 +97,8 @@ booth cards are active:
 .venv/bin/python -m tools.usb_smoke --url "$RIG_URL" --rig rig1
 ```
 
-Set `PINRIG_OBS_TOKEN` to the configured token. The check cancels its own card
-and leaves OBS evidence unknown; resume reporting afterward. It does not replace
-physical touch/pixel, restart or power-cycle checks.
+The check cancels its own card and leaves OBS evidence unknown. Resume reporting
+afterward. Check physical touch and pixels, restart, and power-cycle separately.
 
 ## Home validation record — 7 November 2026
 

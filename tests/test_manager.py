@@ -106,12 +106,12 @@ class BootstrapTests(unittest.TestCase):
             root = Path(temp)
             (root / 'etc/systemd/system').mkdir(parents=True)
             calls = []
-            setup_manager(root / 'bundle', {'id': 'rig1', 'obs_token': 'other', 'serial': '/dev/test'},
+            setup_manager(root / 'bundle', {'id': 'rig1', 'serial': '/dev/test'},
                           root, lambda *args: calls.append(args), verify=lambda *args: None)
             helper = root / 'usr/local/lib/pinrig/install_linux.py'
             self.assertIn('def install(', helper.read_text())
             config = json.loads((root / 'etc/pinrig-rig.json').read_text())
-            self.assertNotIn('obs_token', config)
+            self.assertEqual(config, {'id': 'rig1', 'serial': '/dev/test'})
             unit = (root / 'etc/systemd/system/pinrig-manager.service').read_text()
             self.assertIn('/opt/pinrig-manager/bin/pinrig-manager', unit)
             self.assertNotIn('/pinrig-rig/current/', unit)

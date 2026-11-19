@@ -397,14 +397,14 @@ class RigHTTPTests(unittest.TestCase):
         self.client = Client()
         self.authority = Authority('rig1', self.client, clock=Clock())
 
-    def request(self, path, value=None, *, token='', headers=None):
+    def request(self, path, value=None, *, headers=None):
         payload = b'' if value is None else json.dumps(value).encode()
         method = 'GET' if value is None else 'POST'
         fields = {'Host': 'rig1:48194', 'Content-Type': 'application/json',
                   'Content-Length': str(len(payload)), **(headers or {})}
         raw = (f'{method} {path} HTTP/1.0\r\n' + ''.join(f'{k}: {v}\r\n' for k, v in fields.items()) + '\r\n').encode() + payload
         socket = FakeConnection(raw)
-        make_rig_handler(self.authority, token=token)(socket, ('127.0.0.1', 0), object())
+        make_rig_handler(self.authority)(socket, ('127.0.0.1', 0), object())
         header, body = socket.output.getvalue().split(b'\r\n\r\n', 1)
         return int(header.split()[1]), body
 
@@ -416,11 +416,11 @@ class RigHTTPTests(unittest.TestCase):
         self.assertEqual(json.loads(body)['rig'], 'rig1')
         self.assertEqual(code, 200)
 
-    def test_obs_token_routing_body_bounds_and_json_validation(self):
+    def test_obs_report_routing_body_bounds_and_json_validation(self):
         report = {'rig': 'rig1', 'live': True, 'valid_for': 8}
-        self.assertEqual(self.request('/api/obs', report, token='secret')[0], 401)
-        self.assertEqual(self.request('/api/obs', report, token='secret',
-                                     headers={'Authorization': 'Bearer secret'})[0], 200)
+        self.assertEqual(self.request('/api/obs', report)[0], 200)
+        self.assertEqual(self.request('/api/obs', report,
+                                     headers={'Origin': 'http://elsewhere'})[0], 403)
         self.assertEqual(self.authority.resolution().state, 'on_air')
         self.assertEqual(self.request('/api/obs', {**report, 'rig': 'rig2'})[0], 422)
         self.assertEqual(self.request('/api/obs', report, headers={'Content-Length': '9000'})[0], 422)
@@ -442,12 +442,12 @@ class RigHTTPTests(unittest.TestCase):
         self.authority = Authority('rig1', LocalClient(host), clock=clock)
         self.authority.observe_video(False)
 
-        def post(url, value, *, headers):
+        def post(url, value):
             self.assertEqual(url, 'http://rig1:48194/api/obs')
-            self.assertEqual(self.request('/api/obs', value, token='secret', headers=headers)[0], 200)
+            self.assertEqual(self.request('/api/obs', value)[0], 200)
 
         publish({'rig1': 'http://rig1:48194'}, {'rig1': True}, sampled_at=clock(),
-                clock=clock, token='secret', post=post)
+                clock=clock, post=post)
         self.assertTrue(self.authority.publish()['ok'])
         self.assertEqual(controller.status()['displayed_state'], 'on_air')
         self.assertEqual(display.frames[-1][0], 'on_air')

@@ -30,12 +30,12 @@ class RigAPI:
 
 
 class SmokeTests(unittest.TestCase):
-    def test_workflow_uses_rig_routes_and_token(self):
+    def test_workflow_uses_rig_routes_without_credentials(self):
         api = RigAPI()
-        check_rig('http://rig:48194/', 'rig1', token='secret', request=api)
+        check_rig('http://rig:48194/', 'rig1', request=api)
         self.assertEqual([x[0] for x in api.calls if x[0] != 'status'],
                          ['obs', 'messages', 'obs', 'clear', 'obs'])
-        self.assertTrue(all(x[2]['headers']['Authorization'] == 'Bearer secret' for x in api.calls))
+        self.assertTrue(all('headers' not in call[2] for call in api.calls))
         self.assertIsNone(api.card)
         self.assertEqual(api.state, 'unknown')
 

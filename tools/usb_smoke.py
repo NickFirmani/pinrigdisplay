@@ -1,6 +1,5 @@
 """Attended rig API → USB check. Run with OBS reporting paused and no booth cards."""
 import argparse
-import os
 import time
 import uuid
 
@@ -9,7 +8,7 @@ from shared.rig_api import OBS_REPORT_PATH, OBS_VALID_FOR
 from shared.display_contracts.commands import identifier
 
 
-def check_rig(url: str, rig: str, *, token: str = '', request=request_json,
+def check_rig(url: str, rig: str, *, request=request_json,
               clock=time.monotonic, delay=time.sleep, timeout: float = 10.) -> None:
     """Check status, OBS ingestion, persistent booth cards and cancellation.
 
@@ -17,10 +16,9 @@ def check_rig(url: str, rig: str, *, token: str = '', request=request_json,
     Physical pixels and touch still require attended inspection.
     """
     base = url.rstrip('/')
-    headers = {'Authorization': 'Bearer ' + token} if token else {}
 
     def call(path, value=None):
-        result = request(base + path, value, headers=headers)
+        result = request(base + path, value)
         if result.get('ok') is False:
             raise RuntimeError(f'{path}: {result}')
         return result
@@ -75,7 +73,7 @@ def main() -> None:
     parser.add_argument('--url', default='http://localhost:48194')
     parser.add_argument('--rig', type=lambda value: identifier(value, 'rig'), required=True)
     args = parser.parse_args()
-    check_rig(args.url, args.rig, token=os.environ.get('PINRIG_OBS_TOKEN', ''))
+    check_rig(args.url, args.rig)
     print('PASS: rig status, OBS ingestion, USB delivery, UNKNOWN retention and booth clear.')
     print('Inspect physical pixels and test real taps separately; resume OBS reporting.')
 

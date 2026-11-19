@@ -53,11 +53,23 @@ Run these commands from the checkout on the corresponding host:
 
 | Role | Inspect | Install or reinstall | Test |
 | --- | --- | --- | --- |
-| Stream | `stream/installation/status.sh` | `stream/installation/install.sh BUNDLE CONFIG` | `stream/installation/test.sh` |
-| Rig | `rig/installation/status.sh` | `rig/installation/install.sh BUNDLE CONFIG` | `rig/installation/test.sh` |
+| Stream | `stream/installation/status.sh` | `stream/installation/install.sh RELEASE` | `stream/installation/test.sh` |
+| Rig | `rig/installation/status.sh` | `rig/installation/install.sh RELEASE` | `rig/installation/test.sh` |
 
-`BUNDLE` is a role bundle directory containing `software.json` and `wheels/`.
-`CONFIG` is the host's JSON file. The installer prompts for sudo as needed.
+The release name resolves to `~/<role>-RELEASE`, the default output of
+`build.sh`. If `~/<role>-config.json` is missing, the installer guides you
+through creating it and saves it with mode 0600. Allocate a terminal with
+`ssh -t` when running this remotely.
+
+PinRig HTTP services accept requests without application credentials on the
+sealed, trusted LAN.
+
+Subsequent runs reuse the saved JSON. You can also pass a bundle directory and
+config path explicitly. Non-interactive runs require an existing config.
+The installer prompts for sudo as needed. Use a bundle built from this source
+for the guided install. When updating existing hosts, install the new rig
+release on each rig before updating the stream PC.
+
 Status reports systemd state, installed and running releases, and connected
 dependencies. Tests exit nonzero on failure. Add `--local-only` to either test
 to verify the local service and release before connecting the rest of the setup.
@@ -96,17 +108,16 @@ that the rig dashboard shows the expected release and a healthy display.
 
 ## 1. Install the stream overview on the Linux OBS PC
 
-Copy the stream bundle onto the OBS PC. Create a private configuration
-file outside the checkout. Generate one credential with
-`python3 -c 'import secrets; print(secrets.token_urlsafe(32))'` for OBS reports;
-substitute it into this JSON:
+Copy the stream bundle onto the OBS PC and run `stream/installation/install.sh RELEASE`.
+The first-run prompts ask for the OBS WebSocket URL, each rig's dashboard and
+management URLs, and its scene mappings. For scripted installation, an example
+of the saved JSON follows.
 
 ```json
 {
   "role": "stream",
   "bind": "0.0.0.0",
   "obs_url": "ws://127.0.0.1:4455",
-  "obs_token": "REPLACE_WITH_GENERATED_OBS_TOKEN",
   "rigs": [
     {
       "id": "rig1",
@@ -122,14 +133,13 @@ Add a second rig entry for production with its own ID, URLs and scene names.
 Install videonode separately on each rig that supplies camera usage information.
 
 ```sh
-chmod 600 /path/to/stream-config.json
-stream/installation/install.sh /path/to/stream-RELEASE /path/to/stream-config.json
 sudoedit /etc/pinrig-stream.env
 ```
 
-In the environment file add `OBS_WEBSOCKET_PASSWORD=...` using systemd environment
-file quoting for special characters. Enable OBS WebSocket and match its URL and
-password. Restart with `sudo systemctl restart pinrig-stream`.
+If OBS WebSocket authentication is enabled, put its password in
+`OBS_WEBSOCKET_PASSWORD` in this file, using systemd environment file quoting for
+special characters. Enable OBS WebSocket, match its URL, and restart with
+`sudo systemctl restart pinrig-stream`.
 
 Run `stream/installation/test.sh --local-only` and open
 `http://STREAM_PC_ADDRESS:48195`. Until rigs exist, they appear unreachable.
@@ -145,9 +155,10 @@ report OBS evidence for the configured rigs. The Pi continues to run
 
 ## 2. Install the rig service on each Linux host
 
-On each rig, copy its matching rig bundle and run `ls /dev/serial/by-id/`
-to find the Pico’s persistent USB path.
-Create a private rig configuration outside the checkout:
+On each rig, copy its matching bundle, connect the Pico, and run
+`rig/installation/install.sh RELEASE`. The first-run prompts ask for the rig
+ID and offer available persistent USB serial paths. For scripted installation,
+an example of the saved JSON follows.
 
 ```json
 {
@@ -155,19 +166,15 @@ Create a private rig configuration outside the checkout:
   "id": "rig1",
   "serial": "/dev/serial/by-id/ACTUAL_DEVICE",
   "bind": "0.0.0.0",
-  "management_port": 48198,
-  "obs_token": "SAME_OBS_TOKEN_AS_STREAM_PC"
+  "management_port": 48198
 }
 ```
 
-Use the OBS credential generated in step 1 and the actual USB path collected on
-this rig. Optional local fields include `port`, `videonode_url`, `bootsel_mount`
-and `management_bind`. Keep the rig and management ports distinct. Then run,
-on that rig:
+Optional local fields include `port`, `videonode_url`, `bootsel_mount`
+and `management_bind`. Keep the rig and management ports distinct.
+After installation, run:
 
 ```sh
-chmod 600 /path/to/rig-config.json
-rig/installation/install.sh /path/to/rig-RELEASE /path/to/rig-config.json
 rig/installation/test.sh
 ```
 
@@ -251,7 +258,7 @@ tools/copy-bundle.sh admin@media-pi operator@rig2 rig 20261119.1
 On the receiving rig, with its private config in the home directory:
 
 ```sh
-ssh -t operator@rig2 '~/pinrig/rig/installation/install.sh ~/rig-20261119.1 ~/rig-config.json'
+ssh -t operator@rig2 '~/pinrig/rig/installation/install.sh 20261119.1'
 ssh operator@rig2 '~/pinrig/rig/installation/test.sh --local-only'
 ```
 

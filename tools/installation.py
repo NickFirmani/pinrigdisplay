@@ -8,12 +8,26 @@ import shlex
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 from urllib.request import ProxyHandler, build_opener
 
 from shared.release_manifests.software import SOFTWARE_ROLES, validate_software
 from shared.rig_api import OBS_VALID_FOR
+from tools.configure_installation import generate_config
 from tools.install_linux import validate_config
+
+
+def install_paths(role: str, bundle_arg: str, config: Path | None) -> tuple[Path, Path]:
+    """Resolve a release name from build.sh or an explicit bundle directory."""
+    home = Path.home()
+    bundle = Path(bundle_arg).expanduser()
+    if '/' not in bundle_arg and not bundle.is_dir():
+        bundle = home / f'{role}-{bundle_arg}'
+    if not bundle.is_dir():
+        raise ValueError(f'bundle directory not found: {bundle}. Build or copy the bundle first.')
+    config = config.expanduser() if config is not None else home / f'{role}-config.json'
+    return bundle, config
 
 
 def install(role: str, bundle: Path, config: Path, *, run=subprocess.run) -> None:
@@ -178,8 +192,8 @@ def main() -> None:
     parser.add_argument('role', choices=SOFTWARE_ROLES)
     commands = parser.add_subparsers(dest='action', required=True)
     bootstrap = commands.add_parser('install', help='install a prepared offline bundle')
-    bootstrap.add_argument('bundle', type=Path, help='directory containing software.json and wheels/')
-    bootstrap.add_argument('config', type=Path, help='private role configuration JSON')
+    bootstrap.add_argument('bundle', help='release name from build.sh or path to the bundle directory')
+    bootstrap.add_argument('config', type=Path, nargs='?', help='private JSON config (default: ~/<role>-config.json)')
     commands.add_parser('status', help='display service, release, and dependency status')
     smoke = commands.add_parser('test', help='check the running installation')
     smoke.add_argument('--local-only', action='store_true', help='allow external dependencies to be disconnected')
@@ -188,10 +202,17 @@ def main() -> None:
         if args.action == 'install':
             if platform.system() != 'Linux':
                 raise ValueError('run the Linux installer on the target host')
-            install(args.role, args.bundle, args.config)
+            bundle, config = install_paths(args.role, args.bundle, args.config)
+            if not config.exists():
+                if not sys.stdin.isatty():
+                    raise ValueError(f'configuration file not found: {config}. Run interactively (ssh -t) to create it.')
+                generate_config(args.role, config)
+            install(args.role, bundle, config)
         else:
             raise SystemExit(inspect(args.role, test=args.action == 'test',
                                      local_only=getattr(args, 'local_only', False)))
+    except (EOFError, KeyboardInterrupt):
+        parser.exit(1, f'{args.role} {args.action}: cancelled\n')
     except (OSError, ValueError, subprocess.CalledProcessError) as error:
         parser.exit(1, f'{args.role} {args.action}: {error}\n')
 

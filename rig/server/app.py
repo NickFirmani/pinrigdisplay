@@ -1,6 +1,5 @@
 """One rig service: booth, source observations, USB delivery and tap receipts."""
 import argparse
-import hmac
 from importlib.resources import files
 import json
 import logging
@@ -29,7 +28,7 @@ def accept_obs(authority, value: object) -> None:
     authority.observe_obs(live, valid_for)
 
 
-def make_rig_handler(authority, *, token: str = '', maintenance=None):
+def make_rig_handler(authority, *, maintenance=None):
     class Handler(JSONHandler):
         def do_GET(self):
             if self.path == '/':
@@ -67,10 +66,6 @@ def make_rig_handler(authority, *, token: str = '', maintenance=None):
                 same_origin = False
             if not same_origin:
                 self.send_json(403, {'error': 'cross-origin requests are not accepted'})
-                return
-            if self.path == OBS_REPORT_PATH and token and not hmac.compare_digest(
-                    self.headers.get('Authorization', '').encode(), ('Bearer ' + token).encode()):
-                self.send_json(401, {'error': 'OBS token required'})
                 return
             if self.headers.get('Transfer-Encoding') or self.headers.get_content_type() != 'application/json':
                 self.send_json(415, {'error': 'use application/json with Content-Length'})
@@ -138,14 +133,13 @@ def run_delivery(authority, host, stop, *, clock=time.monotonic) -> None:
 
 
 def run_service(authority, host, stop, *, bind: str, port: int, videonode_url: str,
-                token: str = '', credentials: str = '', maintenance=None, server_factory=HTTPServer,
+                credentials: str = '', maintenance=None, server_factory=HTTPServer,
                 thread_factory=threading.Thread) -> None:
     """Own the listener, workers and USB host, including partial-startup cleanup."""
     server = None
     workers = []
     try:
-        server = server_factory((bind, port), make_rig_handler(authority, token=token,
-                                                               maintenance=maintenance))
+        server = server_factory((bind, port), make_rig_handler(authority, maintenance=maintenance))
         # Drain accepted HTTP work before closing USB, so a late request cannot
         # reopen the serial connection after shutdown.
         server.daemon_threads = False
@@ -200,7 +194,7 @@ def main() -> None:
     args.releases.mkdir(parents=True, exist_ok=True)
     maintenance = {'jobs': Jobs(args.interactions.parent / 'maintenance.json'), 'installer': FirmwareInstaller(host, args.serial, lock_path=args.interactions.parent / 'maintenance.lock', bootsel_mount=args.bootsel_mount), 'releases': args.releases}
     run_service(authority, host, stop, bind=args.bind, port=args.port,
-                videonode_url=args.videonode_url, token=os.environ.get('PINRIG_OBS_TOKEN', ''),
+                videonode_url=args.videonode_url,
                 credentials=os.environ.get('VIDEONODE_CREDENTIALS', ''), maintenance=maintenance)
 
 

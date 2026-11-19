@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import sys
+from tempfile import TemporaryDirectory
 import time
 from urllib.request import Request, urlopen
 
@@ -169,14 +170,21 @@ def install(bundle: Path, config: dict, *, root: Path = Path('/'), runner=run, v
     os.chown(state, account.pw_uid, account.pw_gid)
     os.chown(state / 'releases', account.pw_uid, account.pw_gid, follow_symlinks=False)
     env = root / ('etc/pinrig-' + role + '.env')
-    if not env.exists():
-        if (not isinstance(config.get('obs_token'), str)
-                or not re.fullmatch(r'[A-Za-z0-9_-]{24,128}', config['obs_token'])):
-            raise ValueError('first install needs a 24–128 character URL-safe obs_token')
-        env.write_text('PINRIG_OBS_TOKEN=' + config['obs_token'] + '\n')
-        env.chmod(0o600)
-    elif env.is_symlink():
+    if env.is_symlink():
         raise ValueError('environment file must not be a symlink')
+    if not env.exists():
+        env.touch(mode=0o600, exist_ok=False)
+    else:
+        previous = env.read_text()
+        retired = {'PINRIG_OBS_TOKEN', 'PINRIG_MAINTENANCE_TOKEN'}
+        current = ''.join(line for line in previous.splitlines(keepends=True)
+                          if line.partition('=')[0].strip() not in retired)
+        if current != previous:
+            with TemporaryDirectory(dir=env.parent) as temporary:
+                replacement = Path(temporary) / env.name
+                replacement.touch(mode=0o600)
+                replacement.write_text(current)
+                replacement.replace(env)
     if role == 'rig':
         if not re.fullmatch(r'[A-Za-z0-9_.:-]{1,64}', config['id']):
             raise ValueError('invalid rig identity')

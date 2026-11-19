@@ -187,7 +187,7 @@ def main() -> None:
             stop.wait(2)
     workers = [threading.Thread(target=server.serve_forever), threading.Thread(target=obs.run,
         args=(targets, stop), kwargs={'url': config.get('obs_url', 'ws://127.0.0.1:4455'),
-        'password': os.environ.get('OBS_WEBSOCKET_PASSWORD', ''), 'token': os.environ.get('PINRIG_OBS_TOKEN', ''),
+        'password': os.environ.get('OBS_WEBSOCKET_PASSWORD', ''),
         'status': status, 'mappings': mappings})]
     workers += [threading.Thread(target=poll, args=(rig,)) for rig in config['rigs']]
     try:

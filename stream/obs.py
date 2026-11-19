@@ -68,10 +68,9 @@ class OBS:
         return live_rigs(streaming, scene)
 
 
-def publish(targets: dict[str, str], evidence: dict[str, bool | None], *, token: str = '',
+def publish(targets: dict[str, str], evidence: dict[str, bool | None], *,
             sampled_at: float, clock=time.monotonic, post=request_json, report=None) -> None:
     """Bound each report to the original snapshot; never queue stale reports."""
-    headers = {'Authorization': 'Bearer ' + token} if token else {}
     for rig, url in targets.items():
         remaining = OBS_VALID_FOR - (clock() - sampled_at)
         if remaining <= 0:
@@ -80,7 +79,7 @@ def publish(targets: dict[str, str], evidence: dict[str, bool | None], *, token:
             continue
         try:
             post(url.rstrip('/') + OBS_REPORT_PATH, {'rig': rig, 'live': evidence[rig],
-                 'valid_for': remaining}, headers=headers)
+                 'valid_for': remaining})
             if report:
                 report(rig, None)
         except (OSError, ValueError) as error:
@@ -89,7 +88,7 @@ def publish(targets: dict[str, str], evidence: dict[str, bool | None], *, token:
             LOGGER.warning('OBS report to %s failed: %s', rig, error)
 
 
-def run(targets, stop, *, url='ws://127.0.0.1:4455', password='', token='',
+def run(targets, stop, *, url='ws://127.0.0.1:4455', password='',
         connect=None, clock=time.monotonic, post=request_json, status=None, mappings=None) -> None:
     transport_errors = (OSError, ValueError)
     if connect is None:
@@ -120,13 +119,13 @@ def run(targets, stop, *, url='ws://127.0.0.1:4455', password='', token='',
                 if status:
                     status.observed({'connected': False, 'error': str(error), 'scene': None, 'streaming': None})
             if executor:
-                pending = [executor.submit(publish, {rig: target}, evidence, token=token,
+                pending = [executor.submit(publish, {rig: target}, evidence,
                     sampled_at=sampled_at, clock=clock, post=post, report=status.delivered)
                     for rig, target in targets.items()]
                 for future in pending:
                     future.result()
             else:
-                publish(targets, evidence, token=token, sampled_at=sampled_at, clock=clock, post=post)
+                publish(targets, evidence, sampled_at=sampled_at, clock=clock, post=post)
             stop.wait(1)
     finally:
         if executor:

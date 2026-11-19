@@ -253,16 +253,20 @@ class DeploymentTests(unittest.TestCase):
                 calls.append(args)
                 if 'venv' in args:
                     Path(args[-1]).mkdir(parents=True, exist_ok=True)
-            config = {'id': 'a', 'serial': '/dev/test', 'obs_token': 'a' * 32}
+            config = {'id': 'a', 'serial': '/dev/test'}
             with patch('tools.install_linux.os.geteuid', return_value=0), patch('tools.install_linux.os.chown') as ownership, patch('tools.install_linux.pwd.getpwnam', return_value=SimpleNamespace(pw_uid=100, pw_gid=100)):
                 install(bundle, config, root=root, runner=runner, verify=lambda *a: None, management=False)
                 receipt = root / 'var/lib/pinrig-rig/interactions.sqlite3'
                 receipt.write_text('durable receipt')
                 env = root / 'etc/pinrig-rig.env'
-                original = env.read_text()
-                install(bundle, {**config, 'obs_token': 'c' * 32}, root=root, runner=runner, verify=lambda *a: None, management=False)
+                self.assertEqual(env.read_text(), '')
+                self.assertEqual(env.stat().st_mode & 0o777, 0o600)
+                credentials = '# camera integration\nVIDEONODE_CREDENTIALS=test-user:test-password\n'
+                env.write_text(credentials + 'PINRIG_OBS_TOKEN=retired\nPINRIG_MAINTENANCE_TOKEN=retired\n')
+                install(bundle, config, root=root, runner=runner, verify=lambda *a: None, management=False)
                 self.assertEqual(receipt.read_text(), 'durable receipt')
-                self.assertEqual(env.read_text(), original)
+                self.assertEqual(env.read_text(), credentials)
+                self.assertEqual(env.stat().st_mode & 0o777, 0o600)
                 ownership.assert_any_call(receipt, 100, 100, follow_symlinks=False)
                 self.assertEqual(sum('venv' in call for call in calls), 1)
                 package_calls = [call for call in calls if 'venv' in call or any(str(arg).endswith('/bin/pip') for arg in call)]

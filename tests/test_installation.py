@@ -9,11 +9,85 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
 
+from tools.configure_installation import generate_config
 from tools.install_linux import install_wheels
-from tools.installation import inspect, install
+from tools.installation import inspect, install, main
 
 
 class InstallationTests(unittest.TestCase):
+    def test_install_cli_accepts_release_and_defaults_to_role_config(self):
+        with TemporaryDirectory() as directory:
+            home = Path(directory)
+            for role in ('rig', 'stream'):
+                with self.subTest(role=role):
+                    bundle = home / f'{role}-v1'
+                    bundle.mkdir()
+                    config = home / f'{role}-config.json'
+                    config.touch()
+                    with (patch.dict(os.environ, {'HOME': str(home)}),
+                          patch('tools.installation.platform.system', return_value='Linux'),
+                          patch('tools.installation.install') as bootstrap,
+                          patch('sys.argv', ['installation.py', role, 'install', 'v1'])):
+                        main()
+                    bootstrap.assert_called_once_with(role, bundle, config)
+
+    def test_install_cli_accepts_explicit_paths_and_reports_missing_config(self):
+        with TemporaryDirectory() as directory:
+            home = Path(directory)
+            bundle = home / 'bundle'
+            bundle.mkdir()
+            config = home / 'custom.json'
+            config.touch()
+            with (patch.dict(os.environ, {'HOME': str(home)}),
+                  patch('tools.installation.platform.system', return_value='Linux'),
+                  patch('tools.installation.install') as bootstrap):
+                with patch('sys.argv', ['installation.py', 'rig', 'install', str(bundle), str(config)]):
+                    main()
+                bootstrap.assert_called_once_with('rig', bundle, config)
+                with (patch('sys.argv', ['installation.py', 'rig', 'install', str(bundle)]),
+                      patch('sys.stdin.isatty', return_value=False),
+                      patch('sys.stderr') as stderr, self.assertRaises(SystemExit) as error):
+                    main()
+                self.assertEqual(error.exception.code, 1)
+                self.assertIn(f'configuration file not found: {home / "rig-config.json"}',
+                              stderr.write.call_args.args[0])
+
+    def test_interactive_install_generates_stream_config_before_bootstrap(self):
+        with TemporaryDirectory() as directory:
+            home = Path(directory)
+            bundle = home / 'stream-v1'
+            bundle.mkdir()
+            config = home / 'stream-config.json'
+            answers = ['', '', 'http://rig1.local:48194', '', 'Pinball, Both', 'y',
+                       '', 'http://rig2.local:48194', '', '', '']
+            with (patch.dict(os.environ, {'HOME': str(home)}),
+                  patch('tools.installation.platform.system', return_value='Linux'),
+                  patch('tools.installation.install') as bootstrap,
+                  patch('sys.argv', ['installation.py', 'stream', 'install', 'v1']),
+                  patch('sys.stdin.isatty', return_value=True),
+                  patch('builtins.input', side_effect=answers),
+                  patch('builtins.print')):
+                main()
+            bootstrap.assert_called_once_with('stream', bundle, config)
+            saved = json.loads(config.read_text())
+            self.assertEqual(set(saved), {'role', 'bind', 'obs_url', 'rigs'})
+            self.assertEqual(saved['rigs'][0]['management_url'], 'http://rig1.local:48198')
+            self.assertEqual(saved['rigs'][0]['scenes'], ['Pinball', 'Both'])
+            self.assertEqual(saved['rigs'][1]['id'], 'rig2')
+            self.assertEqual(config.stat().st_mode & 0o777, 0o600)
+
+    def test_guided_rig_config_accepts_explicit_serial(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / 'rig-config.json'
+            with (patch('builtins.input', side_effect=['rig2', 'ttyACM0', '/dev/ttyACM0']),
+                  patch('builtins.print')):
+                generate_config('rig', config, serial_directory=root / 'serial')
+            saved = json.loads(config.read_text())
+            self.assertEqual(saved['id'], 'rig2')
+            self.assertEqual(saved['serial'], '/dev/ttyACM0')
+            self.assertEqual(set(saved), {'role', 'bind', 'id', 'serial'})
+
     def test_install_stages_only_manifest_files_and_rejects_wrong_role(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
