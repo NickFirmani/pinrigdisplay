@@ -19,9 +19,12 @@ pico_from_glass = 9.5;
 pico_pin_diameter = 1.9;
 // Plug overmold width; includes free space for insertion.
 plug_opening_width = 15;
-bolt_clearance = 6.9;
-// Under-head length of the two 1/4-20 bolts. Dimensions in mm.
-mount_bolt_length = 12.7; // [12.7:1/2 inch, 15.875:5/8 inch, 19.05:3/4 inch]
+/* [Measured mounting screws, mm] */
+screw_overall_length = 15;
+screw_head_d = 12.5;
+screw_shaft_d = 6;
+// Measured from the flat bearing face to the top of the head.
+screw_head_height = 3.0;
 
 /* [Hidden] */
 $fn = 72;
@@ -49,9 +52,15 @@ bolt_x = body.x/2 + 7;
 ear_r = 9.2;
 // The front post nests in the rear ear and bears directly on its back flange.
 post_d = 15.8;
-head_well_d = 13.2;
-rail_reach = 7.4;
-seat_d = depth + rail_reach - mount_bolt_length;
+head_well_d = screw_head_d + 1.1;
+bolt_clearance = screw_shaft_d + 0.6;
+under_head_length = screw_overall_length - screw_head_height;
+rail_reach = 6.4; // Nominal projection into the rail, without a washer.
+// Local dimensions at the ears, independent of the electronics cavity.
+rear_flange = 1.8;
+front_seat = under_head_length - rail_reach - rear_flange;
+post_end_d = depth - rear_flange;
+seat_d = post_end_d - front_seat;
 pico_x = pcb.x/2 - usb_from_right;
 case_bottom = -body.y/2;
 socket_overhang = 1.3;
@@ -66,9 +75,10 @@ assert(pico_pin_diameter > 1.2 && pico_pin_diameter <= 2.1,
        "Choose a locating pin that fits the Pico's 2.1 mm holes.");
 assert(floor_d > pico_d + 2.9, "Increase cavity_from_glass to clear the USB socket.");
 assert(abs(pico_x) + 12 < pcb.x/2 - 6, "Pico must clear the corner supports.");
-assert(bolt_clearance >= 6.35 && bolt_clearance < head_well_d - 2);
-assert(seat_d > 0 && floor_d - seat_d >= 2.5,
-       "Bolt length must leave a recessed seat and enough faceplate below the head.");
+assert(screw_head_height > 0 && front_seat >= 1.8, "Insufficient material under the head.");
+assert(screw_shaft_d > 0 && bolt_clearance < screw_head_d - 2);
+assert(head_well_d <= post_d - 2, "Head recess leaves too little post wall.");
+assert(seat_d > seam, "Recess must seat the screw in the front post.");
 assert(plug_opening_width >= 9 && plug_opening_width < 27);
 
 module slab(d1, d2) {
@@ -122,10 +132,10 @@ module faceplate() {
             for (s=[-1,1])
                 translate([s*(pcb.x/2-3),s*(pcb.y/2-3.42)])
                     slab(board_d-e, board_d+min(1.1,pcb_thickness)) circle(d=2.5);
-            bolts() slab(seam-e,floor_d) circle(d=post_d);
+            bolts() slab(seam-e,post_end_d) circle(d=post_d);
         }
         bolts() slab(-e,seat_d) circle(d=head_well_d);
-        bolts() slab(seat_d-e,floor_d+e) circle(d=bolt_clearance);
+        bolts() slab(seat_d-e,post_end_d+e) circle(d=bolt_clearance);
     }
 }
 module rear_shell() {
@@ -141,7 +151,7 @@ module rear_shell() {
                     cylinder(h=1.35+e,d1=pico_pin_diameter,d2=1.2);
         }
         bolts() slab(seam-e,depth+e) circle(d=bolt_clearance);
-        bolts() slab(seam-e,floor_d) circle(d=post_d+0.6);
+        bolts() slab(seam-e,post_end_d) circle(d=post_d+0.6);
         // Open the bottom wall and back panel just past the socket mouth
         // so the plug shoulder can reach the recessed connector.
         translate([pico_x-plug_opening_width/2,case_bottom-e,-depth-e])
@@ -185,16 +195,20 @@ module reference_rail() {
     }
 }
 module bolt_heads() {
-    color("#869097") bolts() difference() {
-        slab(seat_d-4,seat_d) circle(d=12);
-        slab(seat_d-4-e,seat_d-1.5) circle(d=5.7,$fn=6);
+    // Simplified head envelope; the drive and thread profile are omitted.
+    color("#869097") bolts() hull() {
+        slab(seat_d-0.15*screw_head_height,seat_d) circle(d=screw_head_d);
+        slab(seat_d-0.75*screw_head_height,seat_d-0.70*screw_head_height)
+            circle(d=0.8*screw_head_d);
+        slab(seat_d-screw_head_height,seat_d-0.95*screw_head_height)
+            circle(d=0.55*screw_head_d);
     }
-    color("#869097") bolts() slab(seat_d,seat_d+mount_bolt_length) circle(d=6.35);
+    color("#869097") bolts() slab(seat_d,seat_d+under_head_length) circle(d=screw_shaft_d);
 }
 module reference_nuts() {
     color("#767f84") bolts() slab(depth+3.05,depth+7.0) difference() {
         rounded([17,12],1);
-        circle(d=6.4);
+        circle(d=screw_shaft_d+0.1);
     }
 }
 module assembly(spread=0) {

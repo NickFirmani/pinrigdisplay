@@ -41,7 +41,7 @@ class EnclosureExports(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.parts = {p: triangles(p) for p in
-                     ("faceplate", "faceplate_5_8", "faceplate_3_4", "rear_shell", "fit_front", "fit_front_5_8", "fit_front_3_4", "fit_rear", "fit_usb")}
+                     ("faceplate", "rear_shell", "fit_front", "fit_rear", "fit_usb")}
 
     def test_all_prints_are_closed_and_on_bed(self):
         for part, mesh in self.parts.items():
@@ -56,7 +56,7 @@ class EnclosureExports(unittest.TestCase):
         top = max(p[1] for tri in front for p in tri)
         y = top - 19.05
         for x in (-63.67, 63.67):
-            for dx, dy in ((3.18, 0), (-3.18, 0), (0, 3.18), (0, -3.18)):
+            for dx, dy in ((3.27, 0), (-3.27, 0), (0, 3.27), (0, -3.27)):
                 self.assertEqual(z_crossings(front, -x-dx, y+dy), [])
                 self.assertEqual(z_crossings(rear, x+dx, y+dy), [])
             # Both ear shoulders carry load across the seam at the outside rim.
@@ -66,24 +66,23 @@ class EnclosureExports(unittest.TestCase):
             self.assertEqual(len(b), 2)
             self.assertAlmostEqual(a[1] + b[1], 19.2, places=2)
 
-    def test_short_bolts_bear_on_both_halves_and_reach_the_t_nut(self):
+    def test_measured_screw_bears_on_both_halves_and_reaches_the_nut(self):
         y = 14.47
-        for suffix, length in (("", 12.7), ("_5_8", 15.875), ("_3_4", 19.05)):
-            for name, rear_name, xs in (("faceplate", "rear_shell", (-63.67, 63.67)),
-                                        ("fit_front", "fit_rear", (63.67,))):
-                front = self.parts[name + suffix]
-                rear = self.parts[rear_name]
-                for x in xs:
-                    with self.subTest(part=name + suffix, x=x):
-                        for r in (3.65, 6.45):  # under head and near rim of its pocket
-                            seat, post_end = z_crossings(front, -(x+r), y+0.03)
-                            back, flange = z_crossings(rear, x+r, y+0.03)
-                            self.assertAlmostEqual(back, 0)
-                            self.assertAlmostEqual(post_end + flange, 19.2, places=2)
-                            grip = post_end - seat + flange
-                            self.assertAlmostEqual(length - grip, 7.4, places=2)
-                        self.assertEqual(z_crossings(front, -x, y), [])
-                        self.assertEqual(z_crossings(rear, x, y), [])
+        for front, rear, xs in (("faceplate", "rear_shell", (-63.67, 63.67)),
+                                ("fit_front", "fit_rear", (63.67,))):
+            for x in xs:
+                with self.subTest(part=front, x=x):
+                    # Sample at the shaft edge, beneath the head and near the well rim.
+                    for r in (3.35, 6.25, 6.75):
+                        seat, post_end = z_crossings(self.parts[front], -(x+r), y+0.03)
+                        back, flange = z_crossings(self.parts[rear], x+r, y+0.03)
+                        self.assertAlmostEqual(back, 0)
+                        self.assertAlmostEqual(post_end + flange, 19.2, places=2)
+                        self.assertAlmostEqual(flange, 1.8, places=2)
+                        self.assertAlmostEqual(post_end - seat, 3.8, places=2)
+                        under_head_length = 15.0 - 3.0
+                        self.assertAlmostEqual(under_head_length - (post_end-seat+flange),
+                                               6.4, places=2)
 
     def test_entire_active_rectangle_is_exposed_in_installed_orientation(self):
         for x in (-44.61, 38.91):
