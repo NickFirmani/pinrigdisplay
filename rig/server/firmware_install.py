@@ -5,6 +5,7 @@ import logging
 import os
 from pathlib import Path
 import subprocess
+import sys
 import time
 from shared.release_manifests.display import validate_release
 
@@ -47,7 +48,7 @@ class FirmwareInstaller:
         def remote(*args):
             # Bound subprocess lifetime and avoid returning device/credential output.
             try:
-                self.run(['mpremote', 'connect', self.port, *args], check=True,
+                self.run([sys.executable, '-m', 'mpremote', 'connect', self.port, *args], check=True,
                          timeout=120, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
             except subprocess.CalledProcessError as error:
                 detail = error.stderr.decode(errors='replace') if isinstance(error.stderr, bytes) else str(error.stderr or '')
@@ -85,10 +86,10 @@ class FirmwareInstaller:
                 for name in directories:
                     if name != '.':
                         remote('exec', 'import os\ntry: os.mkdir(' + repr(name) + ')\nexcept OSError as e:\n if e.args[0] != 17: raise')
-                for index, name in enumerate(sorted(manifest['files'], key=lambda name: (name == 'main.py', name)), 1):
-                    if name == 'runtime.uf2':
-                        continue
-                    phase('uploading %d/%d' % (index, len(manifest['files'])))
+                files = sorted(manifest['files'].keys() - {'runtime.uf2'},
+                               key=lambda name: (name == 'main.py', name))
+                for index, name in enumerate(files, 1):
+                    phase('uploading %d/%d' % (index, len(files)))
                     remote('fs', 'cp', str(directory / name), ':' + name)
                 phase('resetting')
                 remote('reset')

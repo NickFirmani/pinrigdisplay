@@ -19,6 +19,16 @@ def run(*args):
     subprocess.run(args, check=True, timeout=300)
 
 
+def install_wheels(venv: Path, bundle: Path, package: str, runner, *, as_service_user: bool = False) -> None:
+    """Install only from the local wheelhouse, ignoring the host's pip settings."""
+    command = ('env', 'PIP_CONFIG_FILE=/dev/null', str(venv / 'bin/pip'), '--isolated',
+               'install', '--no-index', '--only-binary=:all:', '--find-links', str(bundle / 'wheels'))
+    if as_service_user:
+        runner('runuser', '-u', 'pinrigdisplay', '--', *command, package)
+    else:
+        runner(*command, '--upgrade', '--force-reinstall', package)
+
+
 def get_json(url: str | Request) -> dict:
     with urlopen(url, timeout=2) as response:
         return json.loads(response.read(1024 * 1024))
@@ -107,8 +117,7 @@ def setup_manager(bundle: Path, config: dict, root: Path, runner, *, verify=veri
     if unit.exists():
         runner('systemctl', 'stop', 'pinrig-manager.service')
     runner(sys.executable, '-m', 'venv', str(base))
-    runner(str(base / 'bin/pip'), 'install', '--no-index', '--only-binary=:all:', '--find-links', str(bundle / 'wheels'),
-           '--upgrade', '--force-reinstall', 'pinrig-rig')
+    install_wheels(base, bundle, 'pinrig-rig', runner)
     state = root / 'var/lib/pinrig-manager'
     state.mkdir(parents=True, exist_ok=True, mode=0o755)
     unit.write_text('[Unit]\nDescription=Pinrig software management API\nAfter=network.target\n'
@@ -150,8 +159,7 @@ def install(bundle: Path, config: dict, *, root: Path = Path('/'), runner=run, v
             raise ValueError('release directory must not be a symlink')
         os.chown(target, account.pw_uid, account.pw_gid, follow_symlinks=False)
         runner('runuser', '-u', 'pinrigdisplay', '--', sys.executable, '-m', 'venv', str(target))
-        runner('runuser', '-u', 'pinrigdisplay', '--', str(target / 'bin/pip'), 'install', '--no-index', '--only-binary=:all:', '--find-links', str(bundle / 'wheels'),
-            'pinrig-' + role)
+        install_wheels(target, bundle, 'pinrig-' + role, runner, as_service_user=True)
         write_release_metadata(marker, fingerprint)
     # Mark the exact deployed bundle separately from Python package versions.
     write_release_metadata(target / 'release.json', json.dumps({'release': release}))

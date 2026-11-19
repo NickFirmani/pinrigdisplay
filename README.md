@@ -20,6 +20,12 @@ See [installation](docs/deployment.md), [operations](docs/operations.md),
 assembly for [display 1](display/hardware/enclosure/README.md) and
 [display 2](display/hardware/enclosure_2/README.md).
 
+Provision both Picos before leaving for the venue. See
+[Provision displays at home](docs/deployment.md#provision-displays-at-home).
+
+Use the [offline installation commands](docs/deployment.md#get-the-source-and-prepare-for-offline-installation)
+to install or check the Linux services on each host.
+
 ## Development
 
 Run from the repository root with Python 3.11 or later. Pillow and the desktop
