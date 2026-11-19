@@ -16,6 +16,8 @@ from urllib.parse import urlsplit
 from shared.display_contracts.commands import Command, identifier
 from shared.http import HTTPServer, JSONHandler
 from . import obs
+from .chat import Chat
+from .twitch import Twitch
 from shared.identity import software_identity
 from shared.net import read_json, request_json
 from shared.jobs import Jobs
@@ -26,6 +28,9 @@ def load_config(path: Path) -> dict:
     config = json.loads(path.read_text())
     if not isinstance(config, dict):
         raise ValueError('configuration must be an object')
+    client_id = config.get('twitch_client_id', '')
+    if client_id != '':
+        identifier(client_id, 'Twitch client ID')
     rigs = config.get('rigs')
     if not isinstance(rigs, list) or not 1 <= len(rigs) <= 32:
         raise ValueError('configure between 1 and 32 rigs')
@@ -93,7 +98,7 @@ class Status:
         with self.lock:
             self.delivery[rig] = {'error': error, 'at': self.clock()}
 
-    def poll(self, rig: dict, *, get=request_json) -> None:
+    def poll(self, rig: dict, *, get=request_json) -> dict:
         try:
             value = get(rig['url'].rstrip('/') + '/api/status')
             if not isinstance(value, dict) or value.get('rig') != rig['id'] or value.get('status_schema') != 1:
@@ -108,9 +113,11 @@ class Status:
                     raise ValueError('invalid source status')
             with self.lock:
                 self.reports[rig['id']] = {'value': value, 'at': self.clock(), 'error': None}
+            return value
         except (OSError, ValueError) as error:
             with self.lock:
                 self.reports.setdefault(rig['id'], {}).update(error=str(error))
+            return {}
 
     def snapshot(self) -> dict:
         with self.lock:
@@ -145,7 +152,7 @@ def forward_message(rig: dict, payload: dict) -> tuple[int, dict]:
         return response.status, result
 
 
-def handler(status, jobs, deploy, test_display=None, *, send_message=forward_message):
+def handler(status, jobs, deploy, test_display=None, *, send_message=forward_message, twitch=None):
     class Handler(JSONHandler):
         def do_GET(self):
             if self.path == '/':
@@ -157,12 +164,17 @@ def handler(status, jobs, deploy, test_display=None, *, send_message=forward_mes
                 self.end_headers()
                 self.wfile.write(body)
             elif self.path == '/api/status':
-                self.send_json(200, {**status.snapshot(), 'maintenance': jobs.status()})
+                payload = {**status.snapshot(), 'maintenance': jobs.status()}
+                if twitch is not None:
+                    payload['twitch'] = twitch.snapshot()
+                    for rig in payload['rigs']:
+                        rig['chat_delivery'] = twitch.chat.outcome(rig['id'])
+                self.send_json(200, payload)
             else:
                 self.send_json(404, {'error': 'route not found'})
 
         def do_POST(self):
-            if self.path not in ('/api/install', '/api/test-state', '/api/messages', '/api/nickname'):
+            if self.path not in ('/api/install', '/api/test-state', '/api/messages', '/api/nickname', '/api/twitch'):
                 self.send_json(404, {'error': 'route not found'})
                 return
             origin = self.headers.get('Origin')
@@ -174,6 +186,11 @@ def handler(status, jobs, deploy, test_display=None, *, send_message=forward_mes
                 if self.headers.get('Transfer-Encoding') or self.headers.get_content_type() != 'application/json' or not 0 < length <= 8192:
                     raise ValueError('use bounded application/json')
                 value = json.loads(self.rfile.read(length))
+                if self.path == '/api/twitch':
+                    if twitch is None:
+                        raise ValueError('Twitch chat is unavailable.')
+                    self.send_json(200, twitch.action(value))
+                    return
                 if self.path == '/api/nickname':
                     if not isinstance(value, dict) or set(value) != {'rig', 'nickname'}:
                         raise ValueError('expected rig and nickname')
@@ -235,6 +252,8 @@ def main() -> None:
     config = load_config(args.config)
     logging.basicConfig(level=logging.INFO)
     status = Status(config['rigs'], nickname_path=args.state / 'nicknames.json')
+    chat = Chat(config['rigs'])
+    twitch = Twitch(config.get('twitch_client_id', ''), args.state, chat)
     stop = threading.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: stop.set())
@@ -248,18 +267,23 @@ def main() -> None:
     def test_display(rig, state):
         return request_json(rig['url'].rstrip('/') + '/api/test-state', {'state': state})
     server = HTTPServer((args.bind, args.port),
-                        handler(status, jobs, deploy, test_display))
+                        handler(status, jobs, deploy, test_display, twitch=twitch))
     targets = {r['id']: r['url'] for r in config['rigs']}
     mappings = {r['id']: r['scenes'] for r in config['rigs']}
     def poll(rig):
         while not stop.is_set():
-            status.poll(rig)
+            report = status.poll(rig)
+            chat_status = report.get('chat')
+            chat.report(rig['id'], chat_status if isinstance(chat_status, dict) else {})
             stop.wait(2)
     workers = [threading.Thread(target=server.serve_forever), threading.Thread(target=obs.run,
         args=(targets, stop), kwargs={'url': config.get('obs_url', 'ws://127.0.0.1:4455'),
         'password': os.environ.get('OBS_WEBSOCKET_PASSWORD', ''),
         'status': status, 'mappings': mappings})]
     workers += [threading.Thread(target=poll, args=(rig,)) for rig in config['rigs']]
+    if twitch.client_id:
+        workers.append(threading.Thread(target=twitch.run, args=(stop,)))
+        workers.extend(threading.Thread(target=chat.run_rig, args=(rig, stop)) for rig in config['rigs'])
     try:
         for worker in workers:
             worker.start()

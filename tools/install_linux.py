@@ -159,6 +159,10 @@ def validate_config(config: dict) -> str:
             raise ValueError('select an actual /dev/serial/by-id device')
     elif not isinstance(config.get('rigs'), list) or not config['rigs']:
         raise ValueError('stream configuration requires rigs')
+    if role == 'stream' and 'twitch_client_id' in config:
+        client_id = config['twitch_client_id']
+        if not isinstance(client_id, str) or (client_id and not re.fullmatch(r'[A-Za-z0-9_.:-]{1,64}', client_id)):
+            raise ValueError('invalid Twitch client ID')
     return role
 
 
@@ -287,7 +291,10 @@ def install(bundle: Path, config: dict, *, root: Path = Path('/'), runner=run, v
         entry = 'pinrig-rig'
     else:
         settings = state / 'config.json'
-        write_release_metadata(settings, json.dumps({'rigs': config['rigs'], 'obs_url': config.get('obs_url', 'ws://127.0.0.1:4455')}))
+        runtime_config = {'rigs': config['rigs'], 'obs_url': config.get('obs_url', 'ws://127.0.0.1:4455')}
+        if config.get('twitch_client_id'):
+            runtime_config['twitch_client_id'] = config['twitch_client_id']
+        write_release_metadata(settings, json.dumps(runtime_config))
         os.chown(settings, account.pw_uid, account.pw_gid, follow_symlinks=False)
         args = ['--config', str(settings), '--bind', bind, '--port', str(port)]
         entry = 'pinrig-stream'

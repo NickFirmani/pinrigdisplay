@@ -56,7 +56,7 @@ def make_rig_handler(authority, *, maintenance=None):
 
         def do_POST(self):
             if self.path not in (OBS_REPORT_PATH, '/api/messages', '/api/clear', '/api/firmware',
-                                 '/api/test-state'):
+                                 '/api/test-state', '/api/chat', '/api/chat/cancel'):
                 self.send_json(404, {'error': 'route not found'})
                 return
             origin = self.headers.get('Origin')
@@ -98,6 +98,14 @@ def make_rig_handler(authority, *, maintenance=None):
                 if self.path == OBS_REPORT_PATH:
                     accept_obs(authority, value)
                     reply = {'ok': True}
+                elif self.path == '/api/chat':
+                    if not isinstance(value, dict) or set(value) != {'title', 'body', 'request_id'}:
+                        raise ValueError('expected title, body and request_id')
+                    reply = authority.chat(**value)
+                elif self.path == '/api/chat/cancel':
+                    if not isinstance(value, dict) or set(value) != {'message_id'}:
+                        raise ValueError('expected message_id')
+                    reply = authority.cancel_chat(value['message_id'])
                 elif self.path == '/api/messages':
                     if (not isinstance(value, dict) or not {'body', 'request_id'} <= set(value)
                             or set(value) - {'body', 'request_id', 'title', 'priority', 'duration', 'requires_ack'}):

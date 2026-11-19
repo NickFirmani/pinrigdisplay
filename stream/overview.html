@@ -9,13 +9,15 @@
   section { padding:24px; margin:20px 0; border:1px solid #34414d; border-radius:12px; background:#19222b }
   h1 { margin:0 } h2 { font-size:1.2rem } a { color:#9bd5ff }
   label { display:block; margin-top:14px; font-weight:600 }
-  input:not([type=radio],[type=range]),select,textarea { width:100%; min-height:44px; border:1px solid #657789; border-radius:6px; padding:10px; background:#101820; color:inherit; font:inherit }
+  input:not([type=radio],[type=range],[type=checkbox]),select,textarea { width:100%; min-height:44px; border:1px solid #657789; border-radius:6px; padding:10px; background:#101820; color:inherit; font:inherit }
   button { margin-top:18px; padding:12px 18px; border:0; border-radius:6px; background:#9bd5ff; color:#10202c; font:inherit; font-weight:600; cursor:pointer }
   textarea { resize:vertical }
   .message-options { border:0; margin:0 0 14px; padding:0; min-width:0 }
   .message-options legend { padding:0; font-weight:600 }
   .radio-options { display:flex; flex-wrap:wrap; gap:8px 18px }
   .radio-options label { display:flex; align-items:center; gap:6px; margin:4px 0 }
+  #twitch-rigs > div { display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin:8px 0 }
+  #twitch-rigs label { margin:0 }
   #message-duration { width:100%; max-width:380px; margin:4px 0 }
   button.secondary { background:#d5dde4 } .actions { display:flex; flex-wrap:wrap; gap:12px }
   button:disabled { opacity:.5; cursor:default } :focus-visible { outline:3px solid #76c8ff; outline-offset:3px }
@@ -74,10 +76,11 @@
   <div role="tabpanel" id="status-panel" aria-labelledby="status-tab" tabindex="0" hidden>
     <section class="connection-summary">
       <h2>Connections</h2>
-      <dl id="video-connections"><dt>Videonode</dt><dd>Waiting for rig status</dd></dl>
+      <dl id="rig-connections"><dt>Videonode and displays</dt><dd>Waiting for rig status</dd></dl>
       <dl class="obs-connection"><dt>OBS connection</dt><dd id="obs-connection">Checking…</dd></dl>
     </section>
     <section id="obs-panel"><h2>OBS details</h2><dl id="obs"><dt>Status</dt><dd>Connecting…</dd></dl></section>
+    <section><h2>Twitch chat</h2><dl id="twitch-status"></dl></section>
     <div id="rigs"></div>
   </div>
   <div role="tabpanel" id="debug-panel" aria-labelledby="debug-tab" tabindex="0" hidden>
@@ -85,6 +88,19 @@
       <h2>Rig nicknames</h2>
       <p class="muted">Save a blank nickname to show only the rig ID.</p>
       <div id="nickname-forms"><p class="muted">Loading rigs…</p></div>
+    </section>
+    <section>
+      <h2>Twitch chat</h2>
+      <p id="twitch-account"></p>
+      <div class="actions">
+        <button id="twitch-connect" type="button">Connect</button>
+        <button id="twitch-change" type="button">Change account</button>
+        <button id="twitch-disconnect" type="button">Disconnect</button>
+      </div>
+      <p id="twitch-verify" hidden><a id="twitch-link" target="_blank" rel="noopener noreferrer">Approve on Twitch</a>
+        with code <strong id="twitch-code"></strong>.</p>
+      <div id="twitch-rigs"></div>
+      <p id="twitch-result" role="status"></p>
     </section>
     <section>
       <h2>Display test</h2>
@@ -131,6 +147,72 @@ for (const [index, tab] of tabs.entries()) {
     next.focus();
   };
 }
+async function twitchAction(payload, control) {
+  control.disabled = true;
+  control.dataset.saving = 'true';
+  try {
+    const response = await fetch('/api/twitch', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
+    });
+    const reply = await response.json();
+    if (!response.ok) throw new Error(reply.error || 'Twitch action failed');
+    el('twitch-result').textContent = payload.action === 'test' ? 'Test card queued. See Status for delivery.' : '';
+  } catch (error) {
+    el('twitch-result').textContent = error.message;
+  } finally {
+    delete control.dataset.saving;
+    control.disabled = false;
+  }
+}
+
+const twitchControls = new Map();
+for (const action of ['connect', 'change', 'disconnect']) {
+  const button = el('twitch-' + action);
+  button.onclick = () => twitchAction({action}, button);
+}
+
+function renderTwitch(data) {
+  const twitch = data.twitch || {};
+  const channel = twitch.channel ? '@' + twitch.channel : 'Disconnected';
+  const live = twitch.live == null ? 'Unknown' : twitch.live ? 'Live' : 'Offline';
+  fields(el('twitch-status'), {'Channel': channel, 'Live status': live,
+    'Chat connection': twitch.configured ? twitch.connection : 'Setup required', 'Error': twitch.error || 'None'});
+  el('twitch-account').textContent = twitch.configured ? channel : 'Set twitch_client_id in the stream PC configuration.';
+  const approval = twitch.verification;
+  el('twitch-verify').hidden = !approval;
+  if (approval) {
+    el('twitch-link').href = approval.verification_uri;
+    el('twitch-code').textContent = approval.user_code;
+  }
+  el('twitch-connect').disabled = Boolean(el('twitch-connect').dataset.saving || !twitch.configured || approval || twitch.channel);
+  el('twitch-change').disabled = Boolean(el('twitch-change').dataset.saving || !twitch.channel);
+  el('twitch-disconnect').disabled = Boolean(el('twitch-disconnect').dataset.saving || (!twitch.channel && !approval));
+  for (const rig of data.rigs) {
+    if (!twitchControls.has(rig.id)) {
+      const row = document.createElement('div');
+      const label = document.createElement('label');
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      const name = document.createTextNode('');
+      label.append(checkbox, name);
+      checkbox.onchange = () => twitchAction({action: 'toggle', rig: rig.id, enabled: checkbox.checked}, checkbox);
+      const test = document.createElement('button');
+      test.type = 'button';
+      test.textContent = 'Send test card';
+      test.onclick = () => twitchAction({action: 'test', rig: rig.id}, test);
+      row.append(label, test);
+      el('twitch-rigs').append(row);
+      twitchControls.set(rig.id, {name, checkbox, test});
+    }
+    const {name, checkbox, test} = twitchControls.get(rig.id);
+    name.data = ' Twitch chat on ' + rigLabel(rig);
+    if (!checkbox.dataset.saving) checkbox.checked = twitch.rigs?.[rig.id] !== false;
+    checkbox.disabled = Boolean(checkbox.dataset.saving || !twitch.configured);
+    test.disabled = Boolean(test.dataset.saving || !twitch.channel || !checkbox.checked || rig.stale
+      || !rig.status?.chat?.healthy || rig.status?.chat?.booth);
+  }
+}
+
 const messageForm = el('message-form');
 const duration = el('message-duration');
 let messageAttempt;
@@ -303,19 +385,32 @@ function videonodeConnection(rig) {
   if (video.active == null) return ['Stream activity unknown', false];
   return [video.active ? 'Active · streams in use' : 'Idle · no streams in use', true];
 }
+function displayConnection(rig) {
+  if (rig.stale) return ['Unknown · rig status unavailable', false];
+  const host = rig.status?.host?.result;
+  if (!host) return ['Unknown · display host unavailable', false];
+  if (host.maintenance) return ['Maintenance in progress', false];
+  if (host.connected === false) return ['Disconnected · USB', false];
+  if (!host.connected) return ['Waiting for a report', false];
+  if (host.device_status_stale || !host.device) return ['Connected · no recent display report', false];
+  if (host.device.display_fault || host.device.healthy === false) return ['Connected · display fault', false];
+  return ['Connected', true];
+}
 let connectionRigs = [];
 function updateConnections(rigs, obs) {
-  const videoRows = el('video-connections');
-  videoRows.replaceChildren();
-  if (!rigs.length) fields(videoRows, {'Videonode':'Rig status unavailable'});
+  const rows = el('rig-connections');
+  rows.replaceChildren();
+  if (!rigs.length) fields(rows, {'Videonode and displays':'Rig status unavailable'});
   for (const rig of rigs) {
-    const name = document.createElement('dt');
-    name.textContent = rigLabel(rig) + ' · Videonode';
-    const state = document.createElement('dd');
-    const [label, available] = obs ? videonodeConnection(rig) : ['Unknown · overview unavailable', false];
-    state.textContent = label;
-    state.className = available ? 'available' : 'unknown';
-    videoRows.append(name, state);
+    for (const [component, getConnection] of [['Videonode', videonodeConnection], ['Display', displayConnection]]) {
+      const name = document.createElement('dt');
+      name.textContent = rigLabel(rig) + ' · ' + component;
+      const state = document.createElement('dd');
+      const [label, available] = obs ? getConnection(rig) : ['Unknown · overview unavailable', false];
+      state.textContent = label;
+      state.className = available ? 'available' : 'unknown';
+      rows.append(name, state);
+    }
   }
   const connected = obs?.connected && !obs.stale;
   const connection = el('obs-connection');
@@ -335,6 +430,7 @@ async function refresh() {
     connectionRigs = data.rigs;
     updateConnections(connectionRigs, data.obs);
     updateCards(data.rigs, Date.now());
+    renderTwitch(data);
     fields(el('obs'), {'Connection':data.obs.stale?'Unavailable or stale':'Connected',
       'Program scene':data.obs.scene,'Streaming':data.obs.streaming==null?'Unknown':data.obs.streaming?'Live':'Stopped',
       'Last observation':age(data.obs.age),'Scene mapping':data.obs.scene_recognized===false?'Unrecognized scene':'Configured',
@@ -366,6 +462,7 @@ async function refresh() {
         'Source status':rig.status?.reason,
         'Videonode':rig.stale || !video?.fresh || video.active==null?'Unknown / stale':(video.active?'Active':'Inactive')+' · '+age(video.age),
         'OBS delivery':rig.delivery.age==null?'No report':(rig.delivery.error || 'Delivered')+' · '+age(rig.delivery.age),
+        'Twitch chat delivery':rig.chat_delivery || 'No delivery',
         'Tap receipts':host?.interaction_delivery,
         'Error':rig.error || device?.display_fault || device?.touch_fault || host?.delivery_fault || 'None'});
       section.append(detail); return section;

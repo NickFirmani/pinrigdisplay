@@ -59,7 +59,7 @@ class InstallationTests(unittest.TestCase):
             bundle.mkdir()
             config = home / 'stream-config.json'
             answers = ['', '', 'http://rig1.local:48194', '', 'Pinball, Both', 'y',
-                       '', 'http://rig2.local:48194', '', '', '']
+                       '', 'http://rig2.local:48194', '', '', '', 'twitch123']
             with (patch.dict(os.environ, {'HOME': str(home)}),
                   patch('tools.installation.platform.system', return_value='Linux'),
                   patch('tools.installation.install') as bootstrap,
@@ -70,7 +70,8 @@ class InstallationTests(unittest.TestCase):
                 main()
             bootstrap.assert_called_once_with('stream', bundle, config)
             saved = json.loads(config.read_text())
-            self.assertEqual(set(saved), {'role', 'bind', 'obs_url', 'rigs'})
+            self.assertEqual(set(saved), {'role', 'bind', 'obs_url', 'rigs', 'twitch_client_id'})
+            self.assertEqual(saved['twitch_client_id'], 'twitch123')
             self.assertEqual(saved['rigs'][0]['management_url'], 'http://rig1.local:48198')
             self.assertEqual(saved['rigs'][0]['scenes'], ['Pinball', 'Both'])
             self.assertEqual(saved['rigs'][1]['id'], 'rig2')

@@ -59,3 +59,4 @@ ssh streamrig@streamrig.lcp
 # Open the webserver at 
 http://127.0.0.1:48195
 ```
+    

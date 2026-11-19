@@ -47,7 +47,8 @@ configuration files over SSH/SCP or on removable media. With removable media,
 copy the source onto the host. The bundle and config can stay on the mounted
 drive. The install commands use local wheels. The status and test commands use
 the installed services and, for full tests, their connections on the venue LAN
-and over USB. Internet access is needed during preparation only.
+and over USB. Core display operation can run offline. Twitch forwarding needs
+internet access on the stream PC while it is in use.
 
 Run these commands from the checkout on the corresponding host:
 
@@ -327,3 +328,25 @@ Expected: role-specific software wheels, a standalone installer, and
 `software.json`; display `manifest.json`,
 `runtime.uf2`, firmware and `assets/`. Both builders fail on missing build inputs.
 If a build fails, remove that incomplete output directory and rebuild.
+
+## Twitch chat setup
+
+Register a Twitch application of client type **Public** in the
+[Twitch Developer Console](https://dev.twitch.tv/console/apps). Put its Client
+ID in the stream PC installation JSON as `"twitch_client_id": "your-client-id"`
+or enter it during the interactive stream install. For an existing systemd
+installation, rerun the stream installer with the updated installation JSON and a new release bundle.
+The local launcher reads the same setting directly from its `--config` file.
+Omit the field to run without Twitch.
+
+The stream PC needs outbound HTTPS to `id.twitch.tv` and `api.twitch.tv`,
+and outbound secure WebSocket access to `eventsub.wss.twitch.tv`. The dashboard
+uses device approval with the broadcaster's `user:read:chat` permission.
+The stream service writes broadcaster and rig preferences to `twitch.json`
+and OAuth credentials to owner-only `twitch-auth.json` in its state directory
+(`/var/lib/pinrig-stream` for systemd). Keep the credentials file out of shared
+backups and source exports.
+
+Update the stream and rig software together to enable chat admission. The
+existing Pico firmware supports these cards. [Operator instructions](operations.md#forward-twitch-chat-to-the-rig-displays)
+cover account approval and the test card.

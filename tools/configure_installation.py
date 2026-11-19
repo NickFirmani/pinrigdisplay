@@ -72,7 +72,11 @@ def stream_settings() -> dict:
                      'scenes': scenes})
         if number == 32 or ask('Add another rig? (y/N)', 'n').lower() not in ('y', 'yes'):
             break
-    return {'obs_url': obs_url, 'rigs': rigs}
+    client_id = ask('Twitch public app client ID (optional)')
+    while client_id and not re.fullmatch(r'[A-Za-z0-9_.:-]{1,64}', client_id):
+        print('Enter a valid Twitch app client ID, or leave blank to skip.')
+        client_id = ask('Twitch public app client ID (optional)')
+    return {'obs_url': obs_url, 'rigs': rigs, **({'twitch_client_id': client_id} if client_id else {})}
 
 
 def generate_config(role: str, path: Path, *, serial_directory: Path = Path('/dev/serial/by-id')) -> None:

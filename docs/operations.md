@@ -13,8 +13,8 @@ In the home topology, run `pinrig-stream` on the development PC. The Pi 4B runs
 only `pinrig-rig` and the independent `pinrig-manager`; it simulates one of the
 small production rig hosts rather than the OBS/stream PC.
 
-**Status** starts with Videonode activity for each rig, followed by the
-OBS connection. Idle means Videonode reports zero stream consumers. OBS can
+**Status** starts with Videonode activity and the USB display connection for
+each rig, followed by the OBS connection. Idle means Videonode reports zero stream consumers. OBS can
 show Connected while streaming is stopped. Detailed diagnostics follow below.
 
 ## Display test pane
@@ -63,6 +63,23 @@ PinRig. Press `1`–`4` to select a program scene, `s` to toggle streaming, `a` 
 cycle scenes and streaming state automatically, or `m` to return to manual
 mode. In auto mode, a state key stops cycling and applies that manual state.
 Pass the exact scene names configured for the rigs. Press `q` to quit.
+
+## Simulate Twitch chat
+
+On the Stream PC, run this from the source checkout with its Stream PC config.
+It uses the production chat grouping and rig-delivery code, while simulating an
+authorized, live channel; it does not connect to Twitch or the running stream
+service.
+
+```sh
+python3 tools/twitch_simulator.py --config ~/stream-config.json
+```
+
+Press `1` for one message, `2` for a three-message same-chatter burst, or `3` to
+send messages from two chatters. Press `l` to toggle simulated live/offline,
+`n` to select the next rig, `t` to mute/unmute that rig, `a` to cycle message
+scenarios automatically, or `m` to return to manual mode. Press `q` to stop.
+Each rig must be reachable and report a healthy, idle display for delivery.
 
 ## Booth messages
 
@@ -174,3 +191,29 @@ Home test links: [overview on this PC](http://127.0.0.1:48195) and
 local-network port 48198.
 Production defaults remain unchanged. BOOTSEL copying, physical pixels/taps,
 live OBS and both production rigs remain attended acceptance checks.
+
+## Forward Twitch chat to the rig displays
+
+1. Set up the public Twitch app on the stream PC as described in
+   [Deployment](deployment.md#twitch-chat-setup).
+2. Open the stream dashboard and choose **Debugging/Settings → Twitch chat →
+   Connect**. Follow the Twitch link, verify the displayed code, and sign in
+   as the channel's broadcaster. Use **Change account** to authorize a
+   different broadcaster or **Disconnect** to stop forwarding and remove
+   the stream PC's stored credentials.
+3. Each configured rig starts with chat enabled. Use the checkbox next to its
+   nickname and ID to mute it. Select **Send test card** next to an enabled
+   rig to verify routing while the channel is offline. The test still needs
+   an approved account and an available display.
+4. Check **Status → Twitch chat** for the channel's live state and EventSub
+   connection. Each rig's status shows its latest delivery outcome.
+
+Chat follows Twitch's live state independently of OBS and videonode. A card
+holds up to three consecutive messages from one viewer and closes after eight
+seconds. The newest waiting card replaces the previous one. Booth messages
+take priority, and chat received during a booth message is discarded.
+
+For an attended check, go live, send a short burst from two Twitch accounts
+and verify the grouping, legibility and eight-second timeout on one display.
+Send a booth message while chat is visible, then mute the rig during another
+chat card and verify that the card clears.

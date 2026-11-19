@@ -92,3 +92,63 @@ class PageTests(unittest.TestCase):
         self.assertEqual(len(lines), 3)
         self.assertTrue(lines[-1].endswith('…'))
         self.assertTrue(all(draw.textlength(line, font=font) <= 452 for line in lines))
+
+
+class TwitchSettingsPageTests(unittest.TestCase):
+    def test_connect_and_persist_toggle_through_dashboard(self):
+        import json
+        from stream.chat import Chat
+        from stream.overview import Status, handler
+        from stream.twitch import Twitch
+        from shared.jobs import Jobs
+        from tests.helpers import Clock
+        from tests.test_integrations import FakeConnection
+
+        rigs = [{'id': 'rig1', 'url': 'http://rig1'}]
+        clock = Clock()
+
+        def twitch_http(url, **kwargs):
+            if url.endswith('/device'):
+                return {'verification_uri': 'https://www.twitch.tv/activate',
+                        'user_code': 'APPROVE', 'device_code': 'private-device-code',
+                        'interval': 5, 'expires_in': 300}
+            if url.endswith('/token'):
+                return {'access_token': 'private-access-token', 'refresh_token': 'private-refresh-token'}
+            if url.endswith('/validate'):
+                return {'client_id': 'client', 'scopes': ['user:read:chat'], 'user_id': '123',
+                        'login': 'pinball', 'expires_in': 3600}
+            self.fail(url)
+
+        with TemporaryDirectory() as directory:
+            state = Path(directory)
+            twitch = Twitch('client', state, Chat(rigs), clock=clock, http=twitch_http)
+            page = handler(Status(rigs), Jobs(state / 'jobs.json'), None, twitch=twitch)
+
+            def request(path, value=None):
+                payload = b'' if value is None else json.dumps(value).encode()
+                method = 'GET' if value is None else 'POST'
+                raw = (f'{method} {path} HTTP/1.0\r\nHost: localhost\r\n'
+                       f'Content-Type: application/json\r\nContent-Length: {len(payload)}\r\n\r\n').encode()
+                socket = FakeConnection(raw + payload)
+                page(socket, ('127.0.0.1', 0), object())
+                head, body = socket.output.getvalue().split(b'\r\n\r\n', 1)
+                self.assertEqual(int(head.split()[1]), 200, body)
+                return body
+
+            self.assertIn(b'Send test card', request('/'))
+            self.assertTrue(twitch.chat.targets['rig1'].enabled)
+            request('/api/twitch', {'action': 'connect'})
+            body = request('/api/status')
+            self.assertIn(b'APPROVE', body)
+            self.assertNotIn(b'private-device-code', body)
+            clock.advance(5)
+            twitch._poll_device(twitch.device, twitch.generation)
+            request('/api/twitch', {'action': 'toggle', 'rig': 'rig1', 'enabled': False})
+            self.assertEqual((state / 'twitch-auth.json').stat().st_mode & 0o777, 0o600)
+            restart = Twitch('client', state, Chat(rigs))
+            self.assertEqual(restart.snapshot()['channel'], 'pinball')
+            self.assertFalse(restart.chat.targets['rig1'].enabled)
+            self.assertNotIn(b'private-access-token', request('/api/status'))
+            request('/api/twitch', {'action': 'disconnect'})
+            self.assertFalse((state / 'twitch-auth.json').exists())
+            self.assertFalse(Twitch('client', state, Chat(rigs)).chat.targets['rig1'].enabled)

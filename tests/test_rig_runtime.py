@@ -128,3 +128,67 @@ class RuntimeTests(unittest.TestCase):
         run_service(Authority(), Host(), Stop(), bind='localhost', port=48194,
                     videonode_url='http://unused', server_factory=Server, thread_factory=Worker)
         self.assertEqual(calls, ['stop', 'shutdown', ('drain', True), 'join', 'join', 'close_usb'])
+
+
+class ChatAdmissionTests(unittest.TestCase):
+    def setUp(self):
+        self.controller, clock, _ = device()
+        self.addCleanup(setattr, self.controller, 'closed', True)
+        host = Host(LocalDelivery(self.controller), clock=clock)
+        self.addCleanup(host.close)
+        self.host = host
+        self.authority = Authority('rig1', LocalClient(host), clock=clock)
+
+    def visible(self):
+        return self.controller.status()['visible_message']['message_id']
+
+    def test_booth_and_chat_admission_are_serialized_in_either_order(self):
+        for first in ('chat', 'booth'):
+            with self.subTest(first=first):
+                chat_id, booth_id = 'chat-' + first, 'booth-' + first
+                chat = lambda: self.authority.chat('Alice', 'Nice save', chat_id)
+                booth = lambda: self.authority.message('Ready', booth_id, title='BOOTH', priority=0)
+                if first == 'chat':
+                    self.assertTrue(chat()['ok'])
+                    self.assertTrue(booth()['ok'])
+                else:
+                    self.assertTrue(booth()['ok'])
+                    self.assertEqual(chat()['error']['code'], 'booth_busy')
+                self.assertEqual(self.visible(), booth_id)
+                self.host.tick()
+                self.assertTrue(self.authority.status()['chat']['booth'])
+                self.assertEqual(self.controller.status()['pending'], [])
+                self.authority.cancel_chat(booth_id)
+                self.authority.cancel_chat(chat_id)
+                self.assertEqual(self.visible(), booth_id)
+                self.authority.clear(booth_id)
+
+    def test_concurrent_booth_submission_keeps_chat_out_of_device_queue(self):
+        start = threading.Barrier(2)
+        results = {}
+
+        def submit_chat():
+            start.wait()
+            results['chat'] = self.authority.chat('Alice', 'Nice save', 'chat-race')
+
+        worker = threading.Thread(target=submit_chat)
+        worker.start()
+        start.wait()
+        try:
+            reply = self.authority.message('Ready', 'booth-race', title='BOOTH', priority=0)
+            self.assertTrue(reply['ok'])
+        finally:
+            worker.join()
+        if not results['chat']['ok']:
+            self.assertEqual(results['chat']['error']['code'], 'booth_busy')
+        self.assertEqual(self.visible(), 'booth-race')
+        self.assertEqual(self.controller.status()['pending'], [])
+
+    def test_visible_chat_is_targeted_and_a_delayed_cancelled_send_stays_hidden(self):
+        self.assertTrue(self.authority.chat('Alice', 'First', 'chat-one')['ok'])
+        self.assertEqual(self.authority.chat('Bob', 'Second', 'chat-two')['error']['code'], 'chat_busy')
+        self.assertTrue(self.authority.cancel_chat('chat-two')['ok'])
+        self.assertEqual(self.visible(), 'chat-one')
+        self.assertTrue(self.authority.cancel_chat('chat-one')['ok'])
+        self.assertIsNone(self.controller.status()['visible_message'])
+        self.assertEqual(self.authority.chat('Bob', 'Second', 'chat-two')['error']['code'], 'chat_cancelled')
