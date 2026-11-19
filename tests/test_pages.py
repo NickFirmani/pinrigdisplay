@@ -2,7 +2,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from PIL import Image, ImageDraw, ImageChops
-from pinrig_artwork.pages import BACKGROUND, PageRenderer, _wrap, _font
+from shared.artwork.pages import BACKGROUND, PageRenderer, _wrap, _font
 
 
 class PageTests(unittest.TestCase):

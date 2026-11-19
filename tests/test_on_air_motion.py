@@ -1,8 +1,9 @@
 """Exact dirty-region reconstruction, including arbitrary phase jumps."""
 import unittest
+from shared.artwork import layout
 from tools.build_on_air_motion import dirty_rectangles
-from pinrig_artwork.pages import PageRenderer
-from pinrig_artwork.renderer import encode_rgb565
+from shared.artwork.pages import PageRenderer
+from shared.artwork.renderer import encode_rgb565
 
 
 class MotionTests(unittest.TestCase):
@@ -32,9 +33,9 @@ class MotionTests(unittest.TestCase):
         from types import SimpleNamespace
         from unittest.mock import patch
         spec=importlib.util.spec_from_file_location('motion_hardware',
-            Path(__file__).resolve().parents[1]/'firmware/pico/hardware.py')
+            Path(__file__).resolve().parents[1]/'display/firmware/pico/hardware.py')
         module=importlib.util.module_from_spec(spec)
-        with patch.dict(sys.modules,{'pixels':SimpleNamespace(decode=None),
+        with patch.dict(sys.modules,{'layout':layout,'pixels':SimpleNamespace(decode=None),
                 'framebuf':SimpleNamespace(),'machine':SimpleNamespace(Pin=None,SPI=None)}):
             spec.loader.exec_module(module)
         hw=module.Hardware.__new__(module.Hardware)
@@ -76,7 +77,7 @@ class MotionTests(unittest.TestCase):
                 self.assertEqual(actual,target)
 
     def test_camera_stripes_match_on_air_luminance_contrast(self):
-        from pinrig_artwork.pages import _luminance, _scale_color, _camera_stripe
+        from shared.artwork.pages import _luminance, _scale_color, _camera_stripe
         for level in (.78,.89,1.):
             reference=(_luminance(_scale_color((220,49,22),level))+.05)/(\
                 _luminance(_scale_color((170,30,16),level))+.05)

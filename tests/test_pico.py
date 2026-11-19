@@ -4,11 +4,12 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 import unittest
+from shared.artwork import layout
 from unittest.mock import patch
-from pinrig_protocol import commands
+from shared.display_contracts import commands
 from tests.helpers import Clock, command
 
-SPEC=importlib.util.spec_from_file_location('pico_core',Path(__file__).resolve().parents[1]/'firmware/pico/core.py')
+SPEC=importlib.util.spec_from_file_location('pico_core',Path(__file__).resolve().parents[1]/'display/firmware/pico/core.py')
 CORE=importlib.util.module_from_spec(SPEC)
 sys.modules['commands']=commands
 SPEC.loader.exec_module(CORE)
@@ -71,10 +72,10 @@ class PicoTests(unittest.TestCase):
         self.assertEqual(self.device.status()['pending'],['new'])
 
     def test_normal_host_and_authority_cadence_does_not_fill_retry_window(self):
-        from pinrig_host.delivery import LocalDelivery
-        from pinrig_host.service import Host
-        from pinrig_producers.authority import Authority
-        from pinrig_host.client import LocalClient
+        from rig.display_host.delivery import LocalDelivery
+        from rig.display_host.service import Host
+        from rig.server.authority import Authority
+        from rig.display_host.client import LocalClient
         host=Host(LocalDelivery(self.device),clock=self.clock)
         authority=Authority('rig1',LocalClient(host),clock=self.clock)
         # Five minutes includes source publication, host renewals and booth traffic.
@@ -197,10 +198,10 @@ class AssetCodecTests(unittest.TestCase):
 class PicoLayoutTests(unittest.TestCase):
     def test_unknown_uses_compact_asset_and_draws_message_card(self):
         spec=importlib.util.spec_from_file_location('pico_hardware',
-            Path(__file__).resolve().parents[1]/'firmware/pico/hardware.py')
+            Path(__file__).resolve().parents[1]/'display/firmware/pico/hardware.py')
         module=importlib.util.module_from_spec(spec)
         # Only the board libraries are replaced; execute the real render method.
-        with patch.dict(sys.modules,{'pixels':SimpleNamespace(decode=None),
+        with patch.dict(sys.modules,{'layout':layout,'pixels':SimpleNamespace(decode=None),
                 'framebuf':SimpleNamespace(),'machine':SimpleNamespace(Pin=None,SPI=None)}):
             spec.loader.exec_module(module)
         hardware=module.Hardware.__new__(module.Hardware)

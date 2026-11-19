@@ -5,14 +5,15 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from pinrig_host.client import LocalClient
-from pinrig_host.delivery import LocalDelivery
-from pinrig_host.service import Host
-from pinrig_producers.authority import Authority
-from pinrig_producers.maintenance import FirmwareInstaller, Jobs
-from pinrig_producers.overview import Status, load_config
-from pinrig_producers.releases import REQUIRED, REQUIRED_ASSETS, validate_release
-from pinrig_producers.deployment import deployment_action
+from rig.display_host.client import LocalClient
+from rig.display_host.delivery import LocalDelivery
+from rig.display_host.service import Host
+from rig.server.authority import Authority
+from rig.server.firmware_install import FirmwareInstaller
+from shared.jobs import Jobs
+from stream.overview import Status, load_config
+from shared.release_manifests.display import REQUIRED, REQUIRED_ASSETS, validate_release
+from stream.deployment import deployment_action
 from tests.helpers import device
 
 
@@ -180,7 +181,7 @@ class DeploymentTests(unittest.TestCase):
         (path / 'wheels').mkdir()
         (path / 'wheels/test.whl').write_text('test wheel')
         (path / 'install_linux.py').write_text('test installer')
-        manifest = {'schema': 1, 'protocol': 1, 'target': 'linux', 'release': 'software-1', 'files': {
+        manifest = {'schema': 1, 'protocol': 1, 'target': 'linux', 'role': 'rig', 'release': 'software-1', 'files': {
             name: hashlib.sha256((path / name).read_bytes()).hexdigest()
             for name in ('install_linux.py', 'wheels/test.whl')}}
         (path / 'software.json').write_text(json.dumps(manifest))
@@ -221,6 +222,22 @@ class DeploymentTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 deployment_action({'id': 'a', 'url': 'http://a'}, Path(temp))
 
+    def test_linux_bootstrap_rejects_a_bundle_for_the_other_role_before_setup(self):
+        from unittest.mock import Mock, patch
+        from tools.install_linux import install
+
+        with TemporaryDirectory() as temp:
+            bundle = Path(temp)
+            self.software(bundle)
+            root = bundle / 'root'
+            runner = Mock()
+            config = {'role': 'stream', 'rigs': [{'id': 'a'}]}
+            with patch('tools.install_linux.os.geteuid', return_value=0):
+                with self.assertRaisesRegex(ValueError, 'invalid software manifest'):
+                    install(bundle, config, root=root, runner=runner)
+            self.assertFalse(root.exists())
+            runner.assert_not_called()
+
     def test_linux_install_rerun_preserves_configuration_and_receipts(self):
         from types import SimpleNamespace
         from unittest.mock import patch
@@ -239,11 +256,10 @@ class DeploymentTests(unittest.TestCase):
             config = {'id': 'a', 'serial': '/dev/test', 'obs_token': 'a' * 32}
             with patch('tools.install_linux.os.geteuid', return_value=0), patch('tools.install_linux.os.chown') as ownership, patch('tools.install_linux.pwd.getpwnam', return_value=SimpleNamespace(pw_uid=100, pw_gid=100)):
                 install(bundle, config, root=root, runner=runner, verify=lambda *a: None, management=False)
-                receipt = root / 'var/lib/pinrig-host/interactions.sqlite3'
+                receipt = root / 'var/lib/pinrig-rig/interactions.sqlite3'
                 receipt.write_text('durable receipt')
                 env = root / 'etc/pinrig-rig.env'
                 original = env.read_text()
-                env.write_text(original + 'PINRIG_MAINTENANCE_TOKEN=legacy\n')
                 install(bundle, {**config, 'obs_token': 'c' * 32}, root=root, runner=runner, verify=lambda *a: None, management=False)
                 self.assertEqual(receipt.read_text(), 'durable receipt')
                 self.assertEqual(env.read_text(), original)
@@ -252,6 +268,8 @@ class DeploymentTests(unittest.TestCase):
                 package_calls = [call for call in calls if 'venv' in call or any(str(arg).endswith('/bin/pip') for arg in call)]
                 self.assertTrue(all(call[:4] == ('runuser', '-u', 'pinrigdisplay', '--') for call in package_calls))
                 self.assertFalse(any('useradd' in call for call in calls))
+                wheel_install, = [call for call in package_calls if 'install' in call]
+                self.assertEqual(wheel_install[-1], 'pinrig-rig')
                 self.assertTrue((root / 'opt/pinrig-rig/current').is_symlink())
 
 
@@ -268,7 +286,7 @@ class MaintenanceHTTPTests(unittest.TestCase):
         return int(header.split()[1]), body
 
     def test_firmware_endpoint_uses_local_trust_and_validates_paths(self):
-        from pinrig_producers.rig import make_rig_handler
+        from rig.server.app import make_rig_handler
         from tests.test_integrations import Client
         with TemporaryDirectory() as temp:
             path = Path(temp)
@@ -283,7 +301,7 @@ class MaintenanceHTTPTests(unittest.TestCase):
             self.assertEqual(self.request(handler, '/api/maintenance')[0], 200)
 
     def test_overview_routes_and_rejected_installs(self):
-        from pinrig_producers.overview import handler
+        from stream.overview import handler
         with TemporaryDirectory() as temp:
             status = Status([{'id': 'a', 'url': 'http://a'}])
             calls = []
@@ -308,7 +326,7 @@ class MaintenanceHTTPTests(unittest.TestCase):
 
 class OBSDiagnosticsTests(unittest.TestCase):
     def test_custom_scene_mapping_and_independent_delivery_reports(self):
-        from pinrig_producers.obs import run
+        from stream.obs import run
         from tests.test_integrations import FakeOBS
         class Stop:
             stopped = False
@@ -345,7 +363,7 @@ class OBSDiagnosticsTests(unittest.TestCase):
 
 class InstallLockTests(unittest.TestCase):
     def test_independent_jobs_cannot_overlap_installation(self):
-        from pinrig_producers.maintenance import installation_lock
+        from rig.server.firmware_install import installation_lock
         with TemporaryDirectory() as temp:
             path = Path(temp) / 'installation.lock'
             with installation_lock(path):

@@ -1,9 +1,9 @@
 import importlib.util
 import sys
 from pathlib import Path
-from pinrig_protocol import commands
-from pinrig_protocol.framing import FrameError, Framer, encode
-spec = importlib.util.spec_from_file_location('test_pico_device', Path(__file__).resolve().parents[1] / 'firmware/pico/core.py')
+from shared.display_contracts import commands
+from shared.display_contracts.framing import FrameError, Framer, encode
+spec = importlib.util.spec_from_file_location('test_pico_device', Path(__file__).resolve().parents[1] / 'display/firmware/pico/core.py')
 core = importlib.util.module_from_spec(spec)
 sys.modules['commands'] = commands
 spec.loader.exec_module(core)

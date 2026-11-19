@@ -8,13 +8,13 @@ version = "0.1.0"
 description = "Desktop artwork builder and preview for the Pico display"
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = ["Pillow>=9", "pinrig-protocol==0.1.0"]
+dependencies = ["Pillow>=9"]
 
 [tool.setuptools]
 include-package-data = false
 
-[tool.setuptools.packages.find]
-include = ["pinrig_artwork*"]
+packages = ["shared.artwork"]
+package-dir = {"shared.artwork" = "shared/artwork"}
 
 [tool.setuptools.package-data]
-"pinrig_artwork" = ["assets/*.png"]
+"shared.artwork" = ["assets/*.png"]

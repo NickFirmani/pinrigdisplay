@@ -1,12 +1,13 @@
 """Build full-size ON AIR phases and exact dirty runs, excluding steady pixels."""
 import struct
 from pathlib import Path
-from pinrig_artwork.pages import PageRenderer
-from pinrig_artwork.renderer import encode_rgb565
+from shared.artwork.layout import HEIGHT, WIDTH
+from shared.artwork.pages import PageRenderer
+from shared.artwork.renderer import encode_rgb565
 from tools.build_pico_assets import pack_image, pack_block
 
 
-def dirty_rectangles(frames, width=480, height=320):
+def dirty_rectangles(frames, width=WIDTH, height=HEIGHT):
     """Merge identical changing row spans vertically; safe for skipped phases."""
     active={}
     result=[]
@@ -49,7 +50,7 @@ def grouped_rectangles(frames, tile=10):
         for tx in columns[1:]+[1000]:
             if tx!=previous+1:
                 x=start*tile;y=ty*tile
-                rects.append((x,y,min(480-x,(previous-start+1)*tile),min(tile,320-y)))
+                rects.append((x,y,min(WIDTH-x,(previous-start+1)*tile),min(tile,HEIGHT-y)))
                 start=tx
             previous=tx
     return rects

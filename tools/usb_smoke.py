@@ -4,8 +4,9 @@ import os
 import time
 import uuid
 
-from pinrig_producers.net import request_json
-from pinrig_protocol.commands import identifier
+from shared.net import request_json
+from shared.rig_api import OBS_REPORT_PATH, OBS_VALID_FOR
+from shared.display_contracts.commands import identifier
 
 
 def check_rig(url: str, rig: str, *, token: str = '', request=request_json,
@@ -51,13 +52,13 @@ def check_rig(url: str, rig: str, *, token: str = '', request=request_json,
         raise RuntimeError('clear existing booth cards before running the smoke check')
     mid = 'booth-smoke-' + uuid.uuid4().hex[:12]
     try:
-        call('/api/obs', {'rig': rig, 'live': True, 'valid_for': 8})
+        call(OBS_REPORT_PATH, {'rig': rig, 'live': True, 'valid_for': OBS_VALID_FOR})
         wait_for(lambda s: s['displayed_state'] == 'on_air')
         call('/api/messages', {'body': 'Rig API smoke check — clear follows shortly.',
                                'request_id': mid})
         wait_for(lambda s: s['visible_message'] is not None and
                  s['visible_message']['message_id'] == mid)
-        call('/api/obs', {'rig': rig, 'live': None, 'valid_for': 8})
+        call(OBS_REPORT_PATH, {'rig': rig, 'live': None, 'valid_for': OBS_VALID_FOR})
         wait_for(lambda s: s['displayed_state'] == 'unknown' and
                  s['visible_message'] is not None and
                  s['visible_message']['message_id'] == mid)
@@ -65,7 +66,7 @@ def check_rig(url: str, rig: str, *, token: str = '', request=request_json,
         try:
             call('/api/clear', {'message_id': mid})
         finally:
-            call('/api/obs', {'rig': rig, 'live': None, 'valid_for': 8})
+            call(OBS_REPORT_PATH, {'rig': rig, 'live': None, 'valid_for': OBS_VALID_FOR})
     wait_for(lambda s: s['visible_message'] is None and mid not in s['pending'])
 
 

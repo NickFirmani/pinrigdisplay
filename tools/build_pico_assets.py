@@ -2,12 +2,13 @@
 import argparse
 import json
 from pathlib import Path
-import sys
 import struct
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from PIL import Image, ImageDraw
-from pinrig_artwork.pages import PageRenderer, _font
-from pinrig_artwork.renderer import encode_rgb565
+from shared.artwork.layout import (
+    BODY_FONT_SIZE, COMPACT_SIGN_HEIGHT, GLYPH_HEIGHT, HEIGHT, TITLE_FONT_SIZE, WIDTH,
+)
+from shared.artwork.pages import BACKGROUND, PageRenderer, _font
+from shared.artwork.renderer import encode_rgb565
 
 
 def pack_block(raw):
@@ -49,26 +50,26 @@ def build(output):
             sign = pages.on_air(.78)
         else:
             sign = pages.camera_status(active=state == 'camera_active', level=.78)
-        for step, height in ((0, 188), (3, 320)):
-            image = Image.new('RGB', (480, 320), '#070f20')
+        for step, height in ((0, COMPACT_SIGN_HEIGHT), (3, HEIGHT)):
+            image = Image.new('RGB', (WIDTH, HEIGHT), BACKGROUND)
             scaled = sign.copy()
-            scaled.thumbnail((480, height), Image.Resampling.LANCZOS)
-            image.paste(scaled, ((480 - scaled.width) // 2, (height - scaled.height) // 2))
+            scaled.thumbnail((WIDTH, height), Image.Resampling.LANCZOS)
+            image.paste(scaled, ((WIDTH - scaled.width) // 2, (height - scaled.height) // 2))
             raw = encode_rgb565(image).pixels
             (output / f'{state}-{step}-0.r').write_bytes(pack_image(raw))
     # Fixed-height proportional glyphs in MONO_HLSB format for framebuf.blit.
     metrics={}
-    for size in (22,24):
-        font=_font(size,bold=size==24)
+    for size in (BODY_FONT_SIZE, TITLE_FONT_SIZE):
+        font=_font(size,bold=size == TITLE_FONT_SIZE)
         offsets={};data=bytearray()
         for code in list(range(32,127))+[0x2026,0x25a1]:
             char=chr(code)
             width=max(1,round(font.getlength(char)))
             stride=(width+7)//8*8
-            image=Image.new('1',(stride,28))
+            image=Image.new('1',(stride,GLYPH_HEIGHT))
             ImageDraw.Draw(image).text((0,0),char,font=font,fill=1)
-            packed=bytearray(stride//8*28)
-            for y in range(28):
+            packed=bytearray(stride//8*GLYPH_HEIGHT)
+            for y in range(GLYPH_HEIGHT):
                 for x in range(width):
                     if image.getpixel((x,y)):packed[y*(stride//8)+x//8]|=1<<(7-x%8)
             offsets[str(code)]=[len(data),width,stride,len(packed)]

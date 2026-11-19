@@ -3,7 +3,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from pinrig_producers.releases import REQUIRED_ASSETS
+from shared.release_manifests.display import REQUIRED_ASSETS
 from tools.build_on_air_motion import build as build_motion
 from tools.build_pico_assets import build as build_static
 

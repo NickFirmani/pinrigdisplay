@@ -6,7 +6,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
-from pinrig_producers.releases import validate_release
+from shared.release_manifests.display import validate_release
 
 
 def build(output: Path, release: str, runtime: Path, runtime_version: str) -> None:
@@ -14,12 +14,14 @@ def build(output: Path, release: str, runtime: Path, runtime_version: str) -> No
     if not release or len(release) > 64 or any(c not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-' for c in release):
         raise ValueError('release must be a short filename-safe identifier')
     root = Path(__file__).resolve().parents[1]
+    output = output.resolve()
     output.mkdir(parents=True, exist_ok=False)
-    subprocess.run([sys.executable, str(root / 'tools/build_pico_assets.py'), '--output', str(output / 'assets')], check=True)
+    subprocess.run([sys.executable, '-m', 'tools.build_pico_assets', '--output', str(output / 'assets')], check=True, cwd=root)
     subprocess.run([sys.executable, '-m', 'tools.build_on_air_motion', '--output', str(output / 'assets')], check=True, cwd=root)
     for name in ('core', 'hardware', 'pixels', 'storage', 'main'):
-        shutil.copyfile(root / 'firmware/pico' / (name + '.py'), output / (name + '.py'))
-    shutil.copyfile(root / 'pinrig_protocol/commands.py', output / 'commands.py')
+        shutil.copyfile(root / 'display/firmware/pico' / (name + '.py'), output / (name + '.py'))
+    shutil.copyfile(root / 'shared/display_contracts/commands.py', output / 'commands.py')
+    shutil.copyfile(root / 'shared/artwork/layout.py', output / 'layout.py')
     shutil.copyfile(runtime, output / 'runtime.uf2')
     asset_hash = hashlib.sha256()
     for path in sorted((output / 'assets').iterdir()):

@@ -4,12 +4,12 @@ from tempfile import TemporaryDirectory
 import unittest
 import threading
 
-from pinrig_host.client import LocalClient
-from pinrig_host.delivery import LocalDelivery
-from pinrig_host.service import Host
-from pinrig_protocol.interactions import InteractionStore
-from pinrig_producers.authority import Authority
-from pinrig_producers.rig import run_delivery, run_service
+from rig.display_host.client import LocalClient
+from rig.display_host.delivery import LocalDelivery
+from rig.display_host.service import Host
+from rig.display_host.interactions import InteractionStore
+from rig.server.authority import Authority
+from rig.server.app import run_delivery, run_service
 from tests.helpers import device
 
 
@@ -88,7 +88,7 @@ class RuntimeTests(unittest.TestCase):
             done = False
             def is_set(self): return self.done
             def wait(self, duration): self.done = True
-        with self.assertLogs('pinrig_producers.rig', level='WARNING'):
+        with self.assertLogs('rig.server.app', level='WARNING'):
             run_delivery(Authority(), Host(), Stop(), clock=lambda: 0)
         self.assertEqual(calls, ['tick'])
 

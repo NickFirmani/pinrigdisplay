@@ -6,8 +6,8 @@ import tarfile
 from tempfile import TemporaryDirectory
 import unittest
 
-from pinrig_producers.manager import SoftwareInstaller, make_manager_handler, stage_release
-from pinrig_producers.maintenance import Jobs
+from rig.manager import SoftwareInstaller, make_manager_handler, stage_release
+from shared.jobs import Jobs
 from tests import test_maintenance as fixtures
 from tests.test_integrations import FakeConnection
 

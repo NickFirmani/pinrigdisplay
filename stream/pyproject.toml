@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pinrig-stream"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = ["pinrig-shared==0.1.0", "websocket-client>=1.6,<2"]
+
+[project.scripts]
+pinrig-stream = "stream.overview:main"
+
+[tool.setuptools]
+include-package-data = false
+packages = ["stream"]
+package-dir = {"stream" = "."}
+
+[tool.setuptools.package-data]
+stream = ["overview.html"]

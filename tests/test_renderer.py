@@ -4,7 +4,7 @@ import unittest
 
 from PIL import Image
 
-from pinrig_artwork.renderer import Frame, encode_rgb565
+from shared.artwork.renderer import Frame, encode_rgb565
 
 
 class RendererTests(unittest.TestCase):

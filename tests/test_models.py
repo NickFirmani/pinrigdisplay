@@ -1,5 +1,5 @@
 import unittest
-from pinrig_protocol import Command, CommandError
+from shared.display_contracts import Command, CommandError
 from tests.helpers import command
 
 

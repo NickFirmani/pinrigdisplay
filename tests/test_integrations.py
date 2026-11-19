@@ -7,11 +7,11 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 
-from pinrig_producers.authority import Authority
-from pinrig_producers.obs import OBS, live_rigs, publish
-from pinrig_producers.rig import accept_obs, make_rig_handler
-from pinrig_producers.videonode import ConsumerSnapshot, events, run as run_video
-from pinrig_producers.obs import run as run_obs
+from rig.server.authority import Authority
+from stream.obs import OBS, live_rigs, publish
+from rig.server.app import accept_obs, make_rig_handler
+from rig.server.videonode import ConsumerSnapshot, events, run as run_video
+from stream.obs import run as run_obs
 
 
 class Clock:
@@ -322,11 +322,11 @@ class VideonodeTests(unittest.TestCase):
 class BoothContractTests(unittest.TestCase):
     def test_booth_survives_duration_tap_and_web_clear_are_distinct(self):
         from tests.helpers import core, Store
-        from pinrig_protocol.interactions import InteractionStore
+        from rig.display_host.interactions import InteractionStore
         from tests.helpers import Clock as DeviceClock, Display
-        from pinrig_host.delivery import LocalDelivery
-        from pinrig_host.service import Host
-        from pinrig_host.client import LocalClient
+        from rig.display_host.delivery import LocalDelivery
+        from rig.display_host.service import Host
+        from rig.display_host.client import LocalClient
 
         with TemporaryDirectory() as directory:
             clock = DeviceClock()
@@ -428,6 +428,30 @@ class RigHTTPTests(unittest.TestCase):
         self.assertEqual(self.request('/api/obs', report, headers={'Transfer-Encoding': 'chunked'})[0], 415)
         self.assertEqual(self.request('/api/commands', report)[0], 404)
 
+    def test_stream_report_reaches_the_display_over_framed_usb(self):
+        from rig.display_host.client import LocalClient
+        from rig.display_host.delivery import SerialDelivery
+        from rig.display_host.service import Host
+        from tests.helpers import SerialEndpoint, device
+        from tests.test_display_host import Stream
+
+        controller, clock, display = device()
+        serial = Stream(SerialEndpoint(controller), clock)
+        host = Host(SerialDelivery(lambda: serial, clock=clock, timeout=10), clock=clock)
+        self.addCleanup(host.close)
+        self.authority = Authority('rig1', LocalClient(host), clock=clock)
+        self.authority.observe_video(False)
+
+        def post(url, value, *, headers):
+            self.assertEqual(url, 'http://rig1:48194/api/obs')
+            self.assertEqual(self.request('/api/obs', value, token='secret', headers=headers)[0], 200)
+
+        publish({'rig1': 'http://rig1:48194'}, {'rig1': True}, sampled_at=clock(),
+                clock=clock, token='secret', post=post)
+        self.assertTrue(self.authority.publish()['ok'])
+        self.assertEqual(controller.status()['displayed_state'], 'on_air')
+        self.assertEqual(display.frames[-1][0], 'on_air')
+
     def test_booth_send_clear_and_cross_origin_rejection(self):
         code, _ = self.request('/api/messages', {'body': 'Ready', 'request_id': 'booth-abc'})
         self.assertEqual(code, 200)
@@ -451,24 +475,3 @@ class RigHTTPTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
-class OBSCommandLineTests(unittest.TestCase):
-    def test_one_or_two_destinations(self):
-        from unittest.mock import patch
-        from pinrig_producers.obs import main
-        for args, targets in [(['--rig1', 'http://one'], {'rig1': 'http://one'}),
-                              (['--rig2', 'http://two'], {'rig2': 'http://two'}),
-                              (['--rig1', 'http://one', '--rig2', 'http://two'],
-                               {'rig1': 'http://one', 'rig2': 'http://two'})]:
-            with self.subTest(args=args), patch('sys.argv', ['pinrig-obs', *args]), \
-                    patch('pinrig_producers.obs.run') as run, \
-                    patch('pinrig_producers.obs.signal.signal'):
-                main()
-                self.assertEqual(run.call_args.args[0], targets)
-
-    def test_missing_destination_is_rejected(self):
-        from unittest.mock import patch
-        from pinrig_producers.obs import main
-        with patch('sys.argv', ['pinrig-obs']), patch('sys.stderr'), self.assertRaises(SystemExit) as error:
-            main()
-        self.assertEqual(error.exception.code, 2)

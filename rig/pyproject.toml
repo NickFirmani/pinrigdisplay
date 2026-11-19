@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pinrig-rig"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = ["pinrig-shared==0.1.0", "pyserial>=3.5", "mpremote"]
+
+[project.scripts]
+pinrig-rig = "rig.server.app:main"
+pinrig-manager = "rig.manager:main"
+
+[tool.setuptools]
+include-package-data = false
+packages = ["rig", "rig.display_host", "rig.server"]
+package-dir = {"rig" = "."}
+
+[tool.setuptools.package-data]
+"rig.server" = ["booth.html"]

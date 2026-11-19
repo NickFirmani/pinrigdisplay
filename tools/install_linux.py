@@ -12,6 +12,8 @@ import sys
 import time
 from urllib.request import Request, urlopen
 
+from shared.release_manifests.software import SOFTWARE_ROLES, validate_software
+
 
 def run(*args):
     subprocess.run(args, check=True, timeout=300)
@@ -45,7 +47,7 @@ def validate_config(config: dict) -> str:
     if not isinstance(config, dict):
         raise ValueError('configuration must be an object')
     role = config.get('role', 'rig')
-    if role not in ('rig', 'stream'):
+    if role not in SOFTWARE_ROLES:
         raise ValueError('role must be rig or stream')
     port = config.get('port', 48194 if role == 'rig' else 48195)
     if type(port) is not int or not 1 <= port <= 65535:
@@ -106,7 +108,7 @@ def setup_manager(bundle: Path, config: dict, root: Path, runner, *, verify=veri
         runner('systemctl', 'stop', 'pinrig-manager.service')
     runner(sys.executable, '-m', 'venv', str(base))
     runner(str(base / 'bin/pip'), 'install', '--no-index', '--only-binary=:all:', '--find-links', str(bundle / 'wheels'),
-           '--upgrade', '--force-reinstall', 'pinrig-producers')
+           '--upgrade', '--force-reinstall', 'pinrig-rig')
     state = root / 'var/lib/pinrig-manager'
     state.mkdir(parents=True, exist_ok=True, mode=0o755)
     unit.write_text('[Unit]\nDescription=Pinrig software management API\nAfter=network.target\n'
@@ -124,15 +126,9 @@ def install(bundle: Path, config: dict, *, root: Path = Path('/'), runner=run, v
         raise ValueError('run installer with sudo')
     if sys.version_info < (3, 11):
         raise ValueError('Python 3.11+ required')
-    manifest = json.loads((bundle / 'software.json').read_text())
-    release = manifest['release']
-    if manifest.get('schema') != 1 or manifest.get('protocol') != 1 or manifest.get('target') != 'linux' or not re.fullmatch(r'[A-Za-z0-9_.-]{1,64}', release) or release in ('.', '..', 'current', 'current.new'):
-        raise ValueError('invalid software release')
-    for name, digest in manifest['files'].items():
-        path = bundle / name
-        if not path.resolve().is_relative_to(bundle.resolve()) or path.is_symlink() or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
-            raise ValueError('invalid software payload: ' + name)
     role = validate_config(config)
+    manifest = validate_software(bundle, role=role)
+    release = manifest['release']
     try:
         account = pwd.getpwnam('pinrigdisplay')
     except KeyError:
@@ -155,11 +151,11 @@ def install(bundle: Path, config: dict, *, root: Path = Path('/'), runner=run, v
         os.chown(target, account.pw_uid, account.pw_gid, follow_symlinks=False)
         runner('runuser', '-u', 'pinrigdisplay', '--', sys.executable, '-m', 'venv', str(target))
         runner('runuser', '-u', 'pinrigdisplay', '--', str(target / 'bin/pip'), 'install', '--no-index', '--only-binary=:all:', '--find-links', str(bundle / 'wheels'),
-            'pinrig-producers[' + ('rig' if role == 'rig' else 'obs') + ']', *(['mpremote'] if role == 'rig' else []))
+            'pinrig-' + role)
         write_release_metadata(marker, fingerprint)
     # Mark the exact deployed bundle separately from Python package versions.
     write_release_metadata(target / 'release.json', json.dumps({'release': release}))
-    state = root / ('var/lib/pinrig-host' if role == 'rig' else 'var/lib/pinrig-stream')
+    state = root / ('var/lib/pinrig-' + role)
     state.mkdir(parents=True, exist_ok=True)
     (state / 'releases').mkdir(exist_ok=True)
     os.chown(state, account.pw_uid, account.pw_gid)
@@ -173,11 +169,6 @@ def install(bundle: Path, config: dict, *, root: Path = Path('/'), runner=run, v
         env.chmod(0o600)
     elif env.is_symlink():
         raise ValueError('environment file must not be a symlink')
-    else:
-        lines = [line for line in env.read_text().splitlines()
-                 if line.partition('=')[0] != 'PINRIG_MAINTENANCE_TOKEN']
-        write_release_metadata(env, ''.join(line + '\n' for line in lines))
-        env.chmod(0o600)
     if role == 'rig':
         if not re.fullmatch(r'[A-Za-z0-9_.:-]{1,64}', config['id']):
             raise ValueError('invalid rig identity')
