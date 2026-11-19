@@ -8,6 +8,11 @@ The Pico is the display controller; Linux computers are hosts. Keep producer
 interpretation separate from firmware and share the command contract. Desktop
 artwork tools are build dependencies only. See README.md and docs/deployment.md.
 
+Use `display/` for Pico firmware and physical hardware, `rig/` for rig PC
+software, `stream/` for the OBS PC, and `shared/` for contracts, artwork, and
+common support. The two Linux roles communicate over HTTP and import neither
+role package from the other.
+
 ## Python Style
 
 - Write idiomatic Python with clear names and simple control flow.

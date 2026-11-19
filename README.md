@@ -1,25 +1,34 @@
 # Pinrig display
 
-Production: OBS PC → two independent [Armbian tiny PC → USB → Pico 2 W → SPI → display].
+Production uses one OBS PC and two independent Armbian rig PCs. Each rig connects
+to its own Pico 2 W over USB. The Pico drives the display and reads touch over
+SPI. For home testing, use this PC as the stream host and a Pi 4B as the rig.
 
-Home testing: this PC → Pi 4B → USB → Pico 2 W → SPI → display.
+| Folder | Purpose |
+| --- | --- |
+| `shared/` | USB display contracts, artwork and desktop preview, and Linux helpers used by both roles. |
+| `display/` | Pico firmware, wiring, and the two enclosure designs. |
+| `rig/` | USB host, rig dashboard, local camera reader, sign state policy, and independent software manager. |
+| `stream/` | OBS WebSocket integration, stream dashboard, and the client for deploying rig software. |
 
-The stream PC runs `pinrig-stream`: OBS reporting plus an overview of one or
-more rigs and rig software installation. Each rig runs `pinrig-rig`, embedding
-`pinrig_host` USB delivery and serving its booth/status page and display firmware
-installer. Rig software updates use a local-network management API that stays
-available during display-service restarts; bootstrap installs it locally. The Pico alone controls SPI and touch; it has no webpage.
+The stream PC reports OBS state over HTTP. Each rig combines that report with
+its local camera state and publishes display commands over USB. The Pico runs
+the display and touch logic.
 
-See [install/update](docs/deployment.md), [operations](docs/operations.md),
-[protocol](docs/protocol.md), [wiring](hardware/pinouts.md), and
-[enclosure assembly](hardware/enclosure/README.md).
+See [installation](docs/deployment.md), [operations](docs/operations.md),
+[protocol](docs/protocol.md), [wiring](display/hardware/pinouts.md), and enclosure
+assembly for [display 1](display/hardware/enclosure/README.md) and
+[display 2](display/hardware/enclosure_2/README.md).
 
-Desktop artwork tools require Pillow; host and producer installs do not:
+## Development
+
+Run from the repository root with Python 3.11 or later. Pillow and the desktop
+artwork package are only needed for asset builds, previews, and tests.
 
 ```sh
 python3 -m venv .venv
-.venv/bin/pip install ./pinrig_protocol .
-.venv/bin/python tools/build_pico_assets.py --output /tmp/pico-assets
-.venv/bin/python -m pinrig_artwork.preview --output /tmp/pinrig-layouts.png
+.venv/bin/python -m pip install ./shared ./rig ./stream .
+.venv/bin/python -m tools.build_pico_assets --output /tmp/pico-assets
+.venv/bin/python -m shared.artwork.preview --output /tmp/pinrig-layouts.png
 .venv/bin/python -m unittest discover -v
 ```

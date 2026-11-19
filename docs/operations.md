@@ -57,9 +57,9 @@ sudo journalctl -u pinrig-manager -n 100 --no-pager
 ```
 
 Maintenance state persists in `/var/lib/pinrig-stream/maintenance.json` and
-`/var/lib/pinrig-host/maintenance.json`. Rig software jobs persist separately in
+`/var/lib/pinrig-rig/maintenance.json`. Rig software jobs persist separately in
 `/var/lib/pinrig-manager/maintenance.json`, so they survive display-service restarts. Rig tap receipts live in
-`/var/lib/pinrig-host/interactions.sqlite3`. Credentials belong in the root-readable
+`/var/lib/pinrig-rig/interactions.sqlite3`. Credentials belong in the root-readable
 `/etc/pinrig-{stream,rig}.env` files and are not returned by status APIs.
 
 ## Acceptance
@@ -98,7 +98,6 @@ booth cards are active:
 Set `PINRIG_OBS_TOKEN` to the configured token. The check cancels its own card
 and leaves OBS evidence unknown; resume reporting afterward. It does not replace
 physical touch/pixel, restart or power-cycle checks.
-
 
 ## Home validation record — 7 November 2026
 

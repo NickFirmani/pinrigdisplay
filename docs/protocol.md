@@ -4,7 +4,8 @@ The authority and USB host module run in one `pinrig-rig` process. Its HTTP
 API exposes `/api/status`, `/api/obs`, `/api/messages`, and `/api/clear`;
 there is no public `/api/commands` listener.
 
-The command envelope below is shared by the in-process host and Pico USB link.
+The USB command envelope is defined in [shared/display_contracts](../shared/display_contracts).
+The stream-to-rig OBS report is defined in [shared/rig_api.py](../shared/rig_api.py).
 USB uses newline-delimited UTF-8 JSON at 115200 baud with an 8192-byte frame
 limit excluding the newline. Overflow discards through the next newline.
 Invalid encoding, JSON, versions, operations and fields receive explicit errors.
@@ -103,7 +104,7 @@ LittleFS outbox (`interactions.json`) using atomic replacement and sync. A full
 or failed outbox retains the card and reports a fault. Receipts survive ordinary
 restarts and repeat in status until confirmed. The host stores each receipt once
 in SQLite before confirming it, so a lost confirmation can be retried. The
-default store is `/var/lib/pinrig-host/interactions.sqlite3` (`--interactions`).
+default store is `/var/lib/pinrig-rig/interactions.sqlite3` (`--interactions`).
 At the 10,000-receipt limit or on a storage error, confirmation stops and the
 host reports a fault. Archive host receipts before reaching capacity.
 
