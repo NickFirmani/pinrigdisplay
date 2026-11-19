@@ -38,3 +38,14 @@ python3 -m venv .venv
 .venv/bin/python -m shared.artwork.preview --output /tmp/pinrig-layouts.png
 .venv/bin/python -m unittest discover -v
 ```
+
+## Refresh a rig checkout
+
+From the workstation, copy the source and then connect to the rig:
+
+```sh
+git clone git@github.com:NickFirmani/pinrigdisplay.git
+cd pinrigdisplay
+tools/copy-source.sh streamrig@streamrig.lcp
+ssh streamrig@streamrig.lcp
+```

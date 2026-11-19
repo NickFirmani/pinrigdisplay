@@ -140,7 +140,7 @@ class InstallationTests(unittest.TestCase):
                                                 check=True, capture_output=True, text=True)
                         self.assertIn(f'{{rig,stream}} {action}', result.stdout)
 
-    def test_source_copy_exports_new_files_and_preserves_existing_destination(self):
+    def test_source_copy_updates_managed_files_and_preserves_local_files(self):
         root = Path(__file__).resolve().parents[1]
         with TemporaryDirectory() as directory:
             fixture = Path(directory)
@@ -148,7 +148,10 @@ class InstallationTests(unittest.TestCase):
             (source / 'tools').mkdir(parents=True)
             script = source / 'tools/copy-source.sh'
             shutil.copy2(root / 'tools/copy-source.sh', script)
+            shutil.copy2(root / 'tools/update_source.py', source / 'tools')
             (source / 'README.md').write_text('working tree')
+            old_tool = source / 'tools/old.py'
+            old_tool.touch()
             (source / '.gitignore').write_text('ignored.py\n')
             (source / 'tools/ignored.py').touch()
             subprocess.run(['git', 'init', '-q'], cwd=source, check=True)
@@ -165,8 +168,11 @@ class InstallationTests(unittest.TestCase):
             self.assertTrue((destination / 'tools/copy-source.sh').is_file())
             self.assertFalse((destination / 'tools/ignored.py').exists())
             (destination / 'marker').touch()
-            result = subprocess.run(command, cwd=fixture, env=env, capture_output=True)
-            self.assertNotEqual(result.returncode, 0)
+            (source / 'README.md').write_text('updated working tree')
+            old_tool.unlink()
+            subprocess.run(command, cwd=fixture, env=env, check=True)
+            self.assertEqual((destination / 'README.md').read_text(), 'updated working tree')
+            self.assertFalse((destination / 'tools/old.py').exists())
             self.assertTrue((destination / 'marker').exists())
 
     def test_bundle_scripts_delegate_to_builder_for_role_and_relay_via_workstation(self):

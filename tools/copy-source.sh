@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-    printf 'Usage: %s USER@HOST [NEW_DIRECTORY]\n' "${0##*/}"
+    printf 'Usage: %s USER@HOST [DIRECTORY]\n' "${0##*/}"
 }
 
 if [[ ${1-} == --help ]]; then
@@ -25,12 +25,16 @@ archive=$(mktemp)
 trap 'rm -f -- "$archive"' EXIT
 cd "$root"
 git ls-files -z --cached --others --exclude-standard -- README.md pyproject.toml shared rig stream tools |
+    while IFS= read -r -d '' path; do
+        if [[ -e "$path" || -L "$path" ]]; then
+            printf '%s\0' "$path"
+        fi
+    done |
     COPYFILE_DISABLE=1 tar -czf "$archive" --null -T -
 
-# Remove an incomplete extraction so the same new directory can be used on retry.
 ssh -- "$1" "set -e
 cd \"\$HOME\"
-mkdir -- '$destination'
-trap 'rm -rf -- $destination' 0
-tar -xzf - -C '$destination'
-trap - 0" < "$archive"
+stage=\$(mktemp -d .pinrig-source.XXXXXXXX)
+trap 'rm -rf -- \"\$stage\"' 0
+tar -xzf - -C \"\$stage\"
+python3 \"\$stage/tools/update_source.py\" \"\$stage\" \"\$(pwd -P)/$destination\"" < "$archive"

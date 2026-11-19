@@ -18,20 +18,21 @@ git clone git@github.com:NickFirmani/pinrigdisplay.git
 
 ### Copy the source over SSH without Git on the target
 
-From the workstation checkout, send the source to a new directory on the Linux
-host. This exports files from the working tree, including local source changes
-and new, non-ignored files in the listed project paths. Keep host configs outside
-the checkout and copy them separately. Substitute the actual SSH destination and
-use a fresh destination directory for each source snapshot.
+From the workstation checkout, refresh the source on the Linux host. This
+exports working-tree changes and new, non-ignored source files. It creates the
+destination on first use. Later runs replace exported files and remove files
+that a previous refresh exported and the workstation has since removed.
+Files outside the export, such as the host's build venv, stay in place.
 
 ```sh
 tools/copy-source.sh admin@media-pi
 ```
 
-The host needs SSH and `tar`. It can receive the source even when it has no
-internet access. Log in with `ssh admin@media-pi` and run the role commands
-from `~/pinrig`. Pass a new directory name as the second argument to copy
-another snapshot.
+The host needs SSH, `tar`, and Python 3.11 or newer. It can receive the source
+even when it has no internet access. Log in with `ssh admin@media-pi` and run
+the role commands from `~/pinrig`. Pass a different destination directory name
+as the second argument if needed. On the first refresh of an older copy, stale
+files from before source tracking was added may still be present.
 
 ### Prepare the Linux hosts
 
