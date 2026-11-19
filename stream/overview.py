@@ -10,12 +10,14 @@ from pathlib import Path
 import signal
 import threading
 import time
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
 from urllib.parse import urlsplit
-from shared.display_contracts.commands import identifier
+from shared.display_contracts.commands import Command, identifier
 from shared.http import HTTPServer, JSONHandler
 from . import obs
 from shared.identity import software_identity
-from shared.net import request_json
+from shared.net import read_json, request_json
 from shared.jobs import Jobs
 
 
@@ -44,7 +46,7 @@ def load_config(path: Path) -> dict:
 
 
 class Status:
-    def __init__(self, rigs, *, clock=time.monotonic):
+    def __init__(self, rigs, *, clock=time.monotonic, nickname_path: Path | None = None):
         self.rigs, self.clock = rigs, clock
         self.software = software_identity('pinrig-stream')
         self.lock = threading.Lock()
@@ -53,6 +55,32 @@ class Status:
         self.obs_attempt_at = None
         self.delivery = {}
         self.reports = {}
+        self.nickname_path = nickname_path
+        self.nicknames = (json.loads(nickname_path.read_text())
+                          if nickname_path is not None and nickname_path.exists() else {})
+
+    def set_nickname(self, rig: str, nickname: str) -> str:
+        """Store a nickname by configured rig ID. An empty nickname clears it."""
+        if not any(target['id'] == rig for target in self.rigs):
+            raise ValueError('unknown rig')
+        if not isinstance(nickname, str):
+            raise ValueError('nickname must be text')
+        nickname = nickname.strip()
+        if len(nickname) > 40 or (nickname and not nickname.isprintable()):
+            raise ValueError('nickname must contain at most 40 printable characters')
+        with self.lock:
+            updated = dict(self.nicknames)
+            if nickname:
+                updated[rig] = nickname
+            else:
+                updated.pop(rig, None)
+            if self.nickname_path is not None:
+                self.nickname_path.parent.mkdir(parents=True, exist_ok=True)
+                temporary = self.nickname_path.with_suffix('.tmp')
+                temporary.write_text(json.dumps(updated))
+                temporary.replace(self.nickname_path)
+            self.nicknames = updated
+        return nickname
 
     def observed(self, value: dict) -> None:
         with self.lock:
@@ -95,13 +123,29 @@ class Status:
                 age = None if 'at' not in report else max(0., now - report['at'])
                 delivery = self.delivery.get(rig['id'], {})
                 result['rigs'].append({'id': rig['id'], 'url': rig['url'], 'age': age,
+                    'nickname': self.nicknames.get(rig['id'], ''),
                     'stale': age is None or age > 6 or bool(report.get('error')),
                     'error': report.get('error'), 'status': deepcopy(report.get('value')),
                     'delivery': {'error': delivery.get('error'), 'age': None if 'at' not in delivery else max(0., now - delivery['at'])}})
             return result
 
 
-def handler(status, jobs, deploy, test_display=None):
+def forward_message(rig: dict, payload: dict) -> tuple[int, dict]:
+    """Preserve the rig's application response, including display rejections."""
+    request = Request(rig['url'].rstrip('/') + '/api/messages',
+                      json.dumps(payload).encode(), {'Content-Type': 'application/json'})
+    try:
+        response = urlopen(request, timeout=5)
+    except HTTPError as error:
+        response = error
+    with response:
+        result = read_json(response)
+        if not isinstance(result, dict):
+            raise OSError('Invalid rig message response')
+        return response.status, result
+
+
+def handler(status, jobs, deploy, test_display=None, *, send_message=forward_message):
     class Handler(JSONHandler):
         def do_GET(self):
             if self.path == '/':
@@ -118,7 +162,7 @@ def handler(status, jobs, deploy, test_display=None):
                 self.send_json(404, {'error': 'route not found'})
 
         def do_POST(self):
-            if self.path not in ('/api/install', '/api/test-state'):
+            if self.path not in ('/api/install', '/api/test-state', '/api/messages', '/api/nickname'):
                 self.send_json(404, {'error': 'route not found'})
                 return
             origin = self.headers.get('Origin')
@@ -130,6 +174,32 @@ def handler(status, jobs, deploy, test_display=None):
                 if self.headers.get('Transfer-Encoding') or self.headers.get_content_type() != 'application/json' or not 0 < length <= 8192:
                     raise ValueError('use bounded application/json')
                 value = json.loads(self.rfile.read(length))
+                if self.path == '/api/nickname':
+                    if not isinstance(value, dict) or set(value) != {'rig', 'nickname'}:
+                        raise ValueError('expected rig and nickname')
+                    nickname = status.set_nickname(value['rig'], value['nickname'])
+                    self.send_json(200, {'nickname': nickname})
+                    return
+                if self.path == '/api/messages':
+                    if not isinstance(value, dict) or set(value) != {
+                            'rig', 'title', 'body', 'duration', 'requires_ack', 'request_id'}:
+                        raise ValueError('expected rig and message fields')
+                    rig = next((r for r in status.rigs if r['id'] == value['rig']), None)
+                    if rig is None:
+                        raise ValueError('unknown rig')
+                    request_id = value['request_id']
+                    params = {key: value[key] for key in ('title', 'body', 'duration', 'requires_ack')}
+                    params['priority'] = 8
+                    command = Command.parse({'version': 1, 'request_id': request_id,
+                                             'session': 'validate', 'operation': 'show_message',
+                                             'params': params})
+                    try:
+                        code, reply = send_message(rig, {**command.params, 'request_id': request_id})
+                    except (OSError, ValueError):
+                        self.send_json(502, {'error': 'Could not confirm delivery to the rig.'})
+                    else:
+                        self.send_json(code, reply)
+                    return
                 if self.path == '/api/test-state':
                     if (test_display is None or not isinstance(value, dict)
                             or set(value) != {'rig', 'state'}):
@@ -164,7 +234,7 @@ def main() -> None:
     args = parser.parse_args()
     config = load_config(args.config)
     logging.basicConfig(level=logging.INFO)
-    status = Status(config['rigs'])
+    status = Status(config['rigs'], nickname_path=args.state / 'nicknames.json')
     stop = threading.Event()
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: stop.set())

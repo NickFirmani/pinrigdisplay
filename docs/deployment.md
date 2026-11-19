@@ -158,11 +158,17 @@ cd stream
 ./run.sh
 ```
 
+The same local commands are available as `stream/installation/install.sh --local`
+and `stream/installation/run.sh` from the checkout root. Set `PINRIG_VENV` to
+use a custom virtual environment for both installation and launch.
+
 The first run prompts for OBS and rig settings and saves them to
 `~/stream-config.json`. The app listens on `127.0.0.1:48195`; open
 `http://127.0.0.1:48195`. Pass a config path as the first argument to `run.sh`
 to use a different file. The local runner uses the checkout directly, so source
-changes take effect on the next restart.
+changes take effect on the next restart. Nicknames and maintenance state are
+saved under `~/.local/state/pinrig-stream` by default. Set `XDG_STATE_HOME` to
+change the parent directory. Stage local releases in the `releases` subdirectory.
 
 On macOS, `stream/installation/install.sh RELEASE` is also accepted as a
 shortcut to prepare this local environment; the release name is not used on

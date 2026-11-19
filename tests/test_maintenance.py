@@ -373,6 +373,67 @@ class MaintenanceHTTPTests(unittest.TestCase):
         self.assertIn(b'id="test-apply"', debugging)
         self.assertIn(b'id="install"', debugging)
 
+    def test_overview_nickname_is_saved_per_rig_and_can_be_cleared(self):
+        from stream.overview import handler
+
+        rigs = [{'id': name, 'url': f'http://{name}'} for name in ('a', 'b')]
+        with TemporaryDirectory() as temp:
+            path = Path(temp) / 'nicknames.json'
+            jobs = Jobs(Path(temp) / 'jobs.json')
+            status = Status(rigs, nickname_path=path)
+            handle = handler(status, jobs, None)
+            _, page = self.request(handle, '/')
+            self.assertIn(b'Debugging/settings', page)
+            self.assertIn(b'id="nickname-forms"', page)
+            value = {'rig': 'b', 'nickname': '  Main Stage  '}
+            self.assertEqual(self.request(handle, '/api/nickname', value,
+                                          {'Origin': 'http://other'})[0], 403)
+            self.assertEqual(self.request(handle, '/api/nickname', {**value, 'rig': 'other'})[0], 422)
+            self.assertEqual(self.request(handle, '/api/nickname', {**value, 'nickname': 'x' * 41})[0], 422)
+            code, body = self.request(handle, '/api/nickname', value)
+            self.assertEqual(code, 200)
+            self.assertEqual(json.loads(body)['nickname'], 'Main Stage')
+            _, body = self.request(handle, '/api/status')
+            self.assertEqual([(rig['id'], rig['nickname']) for rig in json.loads(body)['rigs']],
+                             [('a', ''), ('b', 'Main Stage')])
+            restarted = Status(rigs, nickname_path=path)
+            self.assertEqual(restarted.snapshot()['rigs'][1]['nickname'], 'Main Stage')
+            self.assertEqual(self.request(handler(restarted, jobs, None), '/api/nickname',
+                                          {**value, 'nickname': ''})[0], 200)
+            self.assertEqual(Status(rigs, nickname_path=path).snapshot()['rigs'][1]['nickname'], '')
+
+    def test_overview_message_defaults_and_routing(self):
+        from unittest.mock import Mock
+        from stream.overview import handler
+
+        rigs = [{'id': name, 'url': f'http://{name}'} for name in ('a', 'b')]
+        value = {'rig': 'b', 'title': 'BOOTH', 'body': 'Player ready',
+                 'duration': 30, 'requires_ack': False, 'request_id': 'booth-test'}
+        send = Mock(return_value=(200, {'ok': True}))
+        with TemporaryDirectory() as temp:
+            handle = handler(Status(rigs), Jobs(Path(temp) / 'jobs.json'), None,
+                             send_message=send)
+            _, page = self.request(handle, '/')
+            self.assertIn(b'id="message-tab" aria-controls="message-panel" aria-selected="true"', page)
+            self.assertIn(b'value="BOOTH" required', page)
+            self.assertIn(b'name="dismissal" value="auto" checked', page)
+            self.assertIn(b'type="range" min="1" max="300" step="1" value="30"', page)
+            self.assertEqual(self.request(handle, '/api/messages', {**value, 'rig': 'other'})[0], 422)
+            self.assertEqual(self.request(handle, '/api/messages', {**value, 'duration': 0})[0], 422)
+            self.assertEqual(self.request(handle, '/api/messages', value,
+                                          {'Origin': 'http://other'})[0], 403)
+            send.assert_not_called()
+            self.assertEqual(self.request(handle, '/api/messages', value)[0], 200)
+            payload = {key: item for key, item in value.items() if key != 'rig'}
+            send.assert_called_once_with(rigs[1], {**payload, 'priority': 8})
+            send.return_value = (422, {'ok': False, 'error': {'message': 'Touch unavailable'}})
+            code, body = self.request(handle, '/api/messages', {**value, 'requires_ack': True})
+            self.assertEqual(code, 422)
+            self.assertEqual(json.loads(body)['error']['message'], 'Touch unavailable')
+            send.assert_called_with(rigs[1], {**payload, 'priority': 8, 'requires_ack': True})
+            send.side_effect = TimeoutError
+            self.assertEqual(self.request(handle, '/api/messages', value)[0], 502)
+
     def test_overview_routes_and_rejected_installs(self):
         from stream.overview import handler
         with TemporaryDirectory() as temp:

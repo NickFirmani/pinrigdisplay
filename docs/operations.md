@@ -3,9 +3,11 @@
 Start at the stream overview (default port 48195). Each card shows the state
 reported by the Pico and when the report was sampled, in your browser's local
 time. Old reports are marked stale. Open **Rig status** for OBS and rig
-diagnostics or **Debugging** for display tests and rig software installation.
+diagnostics or **Debugging/settings** for display tests and rig software installation.
 Select a rig name to open its booth page (default port 48194) for messages and
-firmware maintenance.
+firmware maintenance. Set a nickname in **Debugging/settings** to show it as
+`Nickname (rig1)` on the overview card and in the message picker. Save a blank
+nickname to show only the rig ID.
 
 In the home topology, run `pinrig-stream` on the development PC. The Pi 4B runs
 only `pinrig-rig` and the independent `pinrig-manager`; it simulates one of the
@@ -13,7 +15,7 @@ small production rig hosts rather than the OBS/stream PC.
 
 ## Display test pane
 
-In the stream overview's **Debugging** tab, apply a display test override to one
+In the stream overview's **Debugging/settings** tab, apply a display test override to one
 rig. Choose ON AIR, CAMERA ACTIVE, CAMERA INACTIVE or UNKNOWN and check the
 rig card while observing the physical panel. The rig remains the sole
 owner of USB delivery. It reports the active override and its remaining time,
@@ -60,8 +62,14 @@ Pass the exact scene names configured for the rigs. Press `q` to quit.
 
 ## Booth messages
 
-Choose **Physical acknowledgment** for a card that stays until someone taps it
-or the booth clears it. Choose **Timed** for a card that expires after its
+The Stream overview opens to **Message**. Select a rig and enter the message.
+The title defaults to BOOTH and **Auto dismiss** defaults to 30 seconds.
+Use the slider to set 1–300 seconds, or select **Tap to dismiss** to keep the
+message visible until a tap. Use the rig's booth page to see the message queue
+or cancel a message.
+
+On the booth page, choose **Physical acknowledgment** for a card that stays
+until someone taps it or the booth clears it. Choose **Timed** for a card that expires after its
 display interval. Press and release anywhere on a visible card to acknowledge
 a required card or dismiss a timed one early. **Clear** cancels a visible or
 queued card. UNKNOWN preserves messages and their queue.

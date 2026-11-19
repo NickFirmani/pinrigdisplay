@@ -203,6 +203,51 @@ class InstallationTests(unittest.TestCase):
             delivery['error'] = 'HTTP 401'
             self.assertEqual(inspect('stream', test=True, **params), 1)
 
+    def test_local_stream_launcher_uses_user_state(self):
+        stream = Path(__file__).resolve().parents[1] / 'stream'
+        with TemporaryDirectory() as directory:
+            home = Path(directory)
+            config = home / 'stream-config.json'
+            config.touch()
+            venv = home / 'custom venv'
+            python = venv / 'bin' / 'python'
+            python.parent.mkdir(parents=True)
+            python.symlink_to('/bin/echo')
+            env = {**os.environ, 'HOME': directory, 'PINRIG_PYTHON': '', 'PINRIG_VENV': str(venv)}
+            for state_home in ('', str(home / 'custom-state')):
+                with self.subTest(state_home=state_home):
+                    state = Path(state_home or home / '.local/state') / 'pinrig-stream'
+                    result = subprocess.run(
+                        [stream / 'run.sh', str(config), '--port', '48196'],
+                        cwd=directory, env={**env, 'XDG_STATE_HOME': state_home},
+                        check=True, capture_output=True, text=True,
+                    )
+                    self.assertIn(f'--state {state} --releases {state / "releases"}', result.stdout)
+                    self.assertTrue(result.stdout.rstrip().endswith('--port 48196'))
+                    direct = subprocess.run(
+                        [stream / 'installation/run.sh', str(config), '--port', '48196'],
+                        cwd=directory, env={**env, 'XDG_STATE_HOME': state_home},
+                        check=True, capture_output=True, text=True,
+                    )
+                    self.assertEqual(result.stdout, direct.stdout)
+
+    def test_local_stream_install_entrypoints_share_custom_environment(self):
+        stream = Path(__file__).resolve().parents[1] / 'stream'
+        with TemporaryDirectory() as directory:
+            venv = Path(directory) / 'custom venv'
+            python = venv / 'bin' / 'python'
+            python.parent.mkdir(parents=True)
+            python.write_text('#!/bin/sh\nprintf "True\\n"\n')
+            python.chmod(0o755)
+            env = {**os.environ, 'PINRIG_VENV': str(venv)}
+            outputs = []
+            for args in ([stream / 'install.sh'], [stream / 'installation/install.sh', '--local']):
+                result = subprocess.run(args, cwd=directory, env=env, check=True,
+                                        capture_output=True, text=True)
+                self.assertIn(f'Stream software installed in {venv}', result.stdout)
+                outputs.append(result.stdout)
+            self.assertEqual(*outputs)
+
     def test_role_entrypoints_work_outside_checkout(self):
         root = Path(__file__).resolve().parents[1]
         with TemporaryDirectory() as directory:
