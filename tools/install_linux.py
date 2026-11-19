@@ -7,7 +7,6 @@ from pathlib import Path
 import pwd
 import re
 import shutil
-import shlex
 import subprocess
 import sys
 import time
@@ -74,17 +73,16 @@ def write_release_metadata(path: Path, text: str) -> None:
         stream.write(text)
 
 
-def verify_manager(config: dict, token: str, *, get=get_json, clock=time.monotonic, delay=time.sleep) -> None:
-    """Verify the independent management API, including its credential."""
+def verify_manager(config: dict, *, get=get_json, clock=time.monotonic, delay=time.sleep) -> None:
+    """Verify the independent management API."""
     bind = config.get('management_bind', config.get('bind', '0.0.0.0'))
     if bind == '0.0.0.0':
         bind = '127.0.0.1'
     url = 'http://%s:%s/api/health' % (bind, config.get('management_port', 48198))
-    request = Request(url, headers={'Authorization': 'Bearer ' + token})
     deadline = clock() + 30
     while clock() < deadline:
         try:
-            if get(request).get('management_schema') == 1:
+            if get(url).get('management_schema') == 1:
                 return
         except (OSError, ValueError):
             pass
@@ -101,7 +99,7 @@ def setup_manager(bundle: Path, config: dict, root: Path, runner, *, verify=veri
     helper.chmod(0o644)
     settings = root / 'etc/pinrig-rig.json'
     settings.write_text(json.dumps({key: value for key, value in config.items()
-                                   if key not in ('maintenance_token', 'obs_token')}))
+                                   if not key.endswith('_token')}))
     settings.chmod(0o600)
     unit = root / 'etc/systemd/system/pinrig-manager.service'
     if unit.exists():
@@ -112,18 +110,13 @@ def setup_manager(bundle: Path, config: dict, root: Path, runner, *, verify=veri
     state = root / 'var/lib/pinrig-manager'
     state.mkdir(parents=True, exist_ok=True, mode=0o755)
     unit.write_text('[Unit]\nDescription=Pinrig software management API\nAfter=network.target\n'
-        '[Service]\nUser=root\nEnvironmentFile=' + str(root / 'etc/pinrig-rig.env') + '\n'
+        '[Service]\nUser=root\n'
         'ExecStart=' + str(base / 'bin/pinrig-manager') + ' --bind ' + config.get('management_bind', config.get('bind', '0.0.0.0')) +
         ' --port ' + str(config.get('management_port', 48198)) + '\nRestart=on-failure\nRestartSec=3\n'
         'TimeoutStopSec=660\nUMask=0022\n[Install]\nWantedBy=multi-user.target\n')
     runner('systemctl', 'daemon-reload')
     runner('systemctl', 'enable', '--now', 'pinrig-manager.service')
-    values = (root / 'etc/pinrig-rig.env').read_text().splitlines()
-    raw = next((line.split('=', 1)[1] for line in values if line.startswith('PINRIG_MAINTENANCE_TOKEN=')), '')
-    parsed = shlex.split(raw)
-    if not parsed:
-        raise ValueError('management credential is missing from rig environment')
-    verify(config, parsed[0])
+    verify(config)
 
 
 def install(bundle: Path, config: dict, *, root: Path = Path('/'), runner=run, verify=verify_service, management: bool = True) -> None:
@@ -173,10 +166,17 @@ def install(bundle: Path, config: dict, *, root: Path = Path('/'), runner=run, v
     os.chown(state / 'releases', account.pw_uid, account.pw_gid, follow_symlinks=False)
     env = root / ('etc/pinrig-' + role + '.env')
     if not env.exists():
-        for key in ('obs_token', 'maintenance_token'):
-            if not isinstance(config.get(key), str) or not re.fullmatch(r'[A-Za-z0-9_-]{24,128}', config[key]):
-                raise ValueError('first install needs 24–128 character URL-safe obs_token and maintenance_token')
-        env.write_text('PINRIG_OBS_TOKEN=' + config['obs_token'] + '\nPINRIG_MAINTENANCE_TOKEN=' + config['maintenance_token'] + '\n')
+        if (not isinstance(config.get('obs_token'), str)
+                or not re.fullmatch(r'[A-Za-z0-9_-]{24,128}', config['obs_token'])):
+            raise ValueError('first install needs a 24–128 character URL-safe obs_token')
+        env.write_text('PINRIG_OBS_TOKEN=' + config['obs_token'] + '\n')
+        env.chmod(0o600)
+    elif env.is_symlink():
+        raise ValueError('environment file must not be a symlink')
+    else:
+        lines = [line for line in env.read_text().splitlines()
+                 if line.partition('=')[0] != 'PINRIG_MAINTENANCE_TOKEN']
+        write_release_metadata(env, ''.join(line + '\n' for line in lines))
         env.chmod(0o600)
     if role == 'rig':
         if not re.fullmatch(r'[A-Za-z0-9_.:-]{1,64}', config['id']):

@@ -88,6 +88,25 @@ class AuthorityTests(unittest.TestCase):
         self.authority.publish()
         self.assertEqual(self.client.calls[-1][1]['state'], 'unknown')
 
+    def test_bounded_display_override_and_automatic_restore(self):
+        self.authority.observe_obs(False, 8)
+        self.authority.observe_video(False)
+        self.authority.set_test_state('camera_active')
+        self.assertEqual(self.authority.resolution().state, 'camera_active')
+        self.assertEqual(self.client.calls[-1][1]['diagnostic'], 'Display test override')
+        self.assertEqual(self.authority.status()['test_override'],
+                         {'state': 'camera_active', 'remaining': 60.0})
+        self.authority.set_test_state('automatic')
+        self.assertEqual(self.authority.resolution().state, 'camera_inactive')
+        self.assertIsNone(self.authority.status()['test_override'])
+        self.authority.set_test_state('on_air')
+        self.clock.now = 60
+        self.assertEqual(self.authority.resolution().state, 'unknown')
+        self.assertIsNone(self.authority.status()['test_override'])
+        for invalid in ('invalid', None, []):
+            with self.subTest(invalid=invalid), self.assertRaisesRegex(ValueError, 'test state'):
+                self.authority.set_test_state(invalid)
+
     def test_message_metadata_is_bounded_and_preserves_first_request(self):
         self.authority.message('Original', 'notice', title='Test')
         self.assertEqual(self.authority.status()['message_details']['notice']['body'], 'Original')
@@ -418,6 +437,16 @@ class RigHTTPTests(unittest.TestCase):
         self.assertEqual(self.request('/api/messages', {'body': ''})[0], 422)
         self.assertEqual(self.request('/api/clear', {'message_id': 'booth-abc'},
                                      headers={'Origin': 'http://elsewhere'})[0], 403)
+
+    def test_display_test_override_uses_local_network_trust(self):
+        value = {'state': 'camera_active'}
+        code, body = self.request('/api/test-state', value)
+        self.assertEqual(code, 200)
+        self.assertTrue(json.loads(body)['ok'])
+        self.assertEqual(self.authority.resolution().state, 'camera_active')
+        self.assertEqual(self.request('/api/test-state', {'state': 'invalid'})[0], 422)
+        self.assertEqual(self.request('/api/test-state', {'state': 'automatic'})[0], 200)
+        self.assertEqual(self.authority.resolution().state, 'unknown')
 
 
 if __name__ == '__main__':

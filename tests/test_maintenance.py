@@ -197,31 +197,29 @@ class DeploymentTests(unittest.TestCase):
                     calls.append(kwargs)
                     return {'id': 'job-1', 'state': 'succeeded'}
                 return {'rig': 'a', 'software_release': 'software-1'}
-            action = deployment_action(rig, Path(temp), token='secret',
+            action = deployment_action(rig, Path(temp),
                 upload=lambda url, directory, **kwargs: {'release': 'software-1'},
                 post=lambda url, value, **kwargs: {'id': 'job-1'}, get=get,
                 clock=clock, delay=clock.advance)
             self.assertEqual(action(lambda p: None)['release'], 'software-1')
-            self.assertEqual(calls, [{'headers': {'Authorization': 'Bearer secret'}}])
+            self.assertEqual(calls, [{}])
 
     def test_api_failure_does_not_report_success(self):
         rig = {'id': 'a', 'url': 'http://a', 'management_url': 'http://a:48198'}
         with TemporaryDirectory() as temp:
             self.software(Path(temp))
-            action = deployment_action(rig, Path(temp), token='secret',
+            action = deployment_action(rig, Path(temp),
                 upload=lambda *a, **kw: {'release': 'software-1'},
                 post=lambda *a, **kw: {'id': 'job-1'},
                 get=lambda *a, **kw: {'id': 'job-1', 'state': 'failed', 'error': 'firmware maintenance busy'})
             with self.assertRaisesRegex(OSError, 'firmware maintenance busy'):
                 action(lambda p: None)
 
-    def test_api_requires_explicit_endpoint_and_credential(self):
+    def test_api_requires_explicit_endpoint(self):
         with TemporaryDirectory() as temp:
             self.software(Path(temp))
-            for rig, token in (({'id': 'a', 'url': 'http://a'}, 'secret'),
-                               ({'id': 'a', 'url': 'http://a', 'management_url': 'http://a:48198'}, '')):
-                with self.assertRaises(ValueError):
-                    deployment_action(rig, Path(temp), token=token)
+            with self.assertRaises(ValueError):
+                deployment_action({'id': 'a', 'url': 'http://a'}, Path(temp))
 
     def test_linux_install_rerun_preserves_configuration_and_receipts(self):
         from types import SimpleNamespace
@@ -238,13 +236,14 @@ class DeploymentTests(unittest.TestCase):
                 calls.append(args)
                 if 'venv' in args:
                     Path(args[-1]).mkdir(parents=True, exist_ok=True)
-            config = {'id': 'a', 'serial': '/dev/test', 'obs_token': 'a' * 32, 'maintenance_token': 'b' * 32}
+            config = {'id': 'a', 'serial': '/dev/test', 'obs_token': 'a' * 32}
             with patch('tools.install_linux.os.geteuid', return_value=0), patch('tools.install_linux.os.chown') as ownership, patch('tools.install_linux.pwd.getpwnam', return_value=SimpleNamespace(pw_uid=100, pw_gid=100)):
                 install(bundle, config, root=root, runner=runner, verify=lambda *a: None, management=False)
                 receipt = root / 'var/lib/pinrig-host/interactions.sqlite3'
                 receipt.write_text('durable receipt')
                 env = root / 'etc/pinrig-rig.env'
                 original = env.read_text()
+                env.write_text(original + 'PINRIG_MAINTENANCE_TOKEN=legacy\n')
                 install(bundle, {**config, 'obs_token': 'c' * 32}, root=root, runner=runner, verify=lambda *a: None, management=False)
                 self.assertEqual(receipt.read_text(), 'durable receipt')
                 self.assertEqual(env.read_text(), original)
@@ -268,28 +267,43 @@ class MaintenanceHTTPTests(unittest.TestCase):
         header, body = connection.output.getvalue().split(b'\r\n\r\n', 1)
         return int(header.split()[1]), body
 
-    def test_firmware_endpoint_authorization_and_path_validation(self):
+    def test_firmware_endpoint_uses_local_trust_and_validates_paths(self):
         from pinrig_producers.rig import make_rig_handler
         from tests.test_integrations import Client
         with TemporaryDirectory() as temp:
             path = Path(temp)
             maintenance = {'jobs': Jobs(path / 'job.json'), 'releases': path, 'installer': None}
             authority = Authority('rig1', Client())
-            handler = make_rig_handler(authority, maintenance=maintenance, maintenance_token='secret')
+            handler = make_rig_handler(authority, maintenance=maintenance)
             value = {'release': 'valid', 'clean': False}
-            self.assertEqual(self.request(handler, '/api/firmware', value)[0], 403)
-            self.assertEqual(self.request(handler, '/api/firmware', value, {'Authorization': 'Bearer secret', 'Origin': 'http://evil'})[0], 403)
-            self.assertEqual(self.request(handler, '/api/firmware', {'release': '..', 'clean': False}, {'Authorization': 'Bearer secret'})[0], 422)
+            self.assertEqual(self.request(handler, '/api/firmware', value,
+                                          {'Origin': 'http://evil'})[0], 403)
+            self.assertEqual(self.request(handler, '/api/firmware',
+                                          {'release': '..', 'clean': False})[0], 422)
             self.assertEqual(self.request(handler, '/api/maintenance')[0], 200)
 
     def test_overview_routes_and_rejected_installs(self):
         from pinrig_producers.overview import handler
         with TemporaryDirectory() as temp:
             status = Status([{'id': 'a', 'url': 'http://a'}])
-            handle = handler(status, Jobs(Path(temp) / 'jobs.json'), lambda rig, release: lambda phase: {}, 'secret')
+            calls = []
+            handle = handler(status, Jobs(Path(temp) / 'jobs.json'),
+                             lambda rig, release: lambda phase: {},
+                             lambda rig, state: calls.append((rig['id'], state)) or
+                             {'ok': True, 'state': state})
             self.assertIn(b'Stream overview', self.request(handle, '/')[1])
-            self.assertEqual(self.request(handle, '/api/install', {'rig': 'a', 'release': 'v1'})[0], 403)
-            self.assertEqual(self.request(handle, '/api/install', {'rig': 'wrong', 'release': 'v1'}, {'Authorization': 'Bearer secret'})[0], 422)
+            self.assertEqual(self.request(handle, '/api/install',
+                                          {'rig': 'a', 'release': 'v1'},
+                                          {'Origin': 'http://evil'})[0], 403)
+            self.assertEqual(self.request(handle, '/api/install',
+                                          {'rig': 'wrong', 'release': 'v1'})[0], 422)
+            code, body = self.request(handle, '/api/test-state',
+                                      {'rig': 'a', 'state': 'on_air'})
+            self.assertEqual(code, 200)
+            self.assertEqual(json.loads(body)['state'], 'on_air')
+            self.assertEqual(calls, [('a', 'on_air')])
+            self.assertEqual(self.request(handle, '/api/test-state',
+                                          {'rig': 'wrong', 'state': 'on_air'})[0], 422)
             self.assertEqual(self.request(handle, '/api/status')[0], 200)
 
 class OBSDiagnosticsTests(unittest.TestCase):

@@ -1,7 +1,6 @@
 """Stream-PC overview: independent rig polling, OBS diagnostics and deployment."""
 import argparse
 from copy import deepcopy
-import hmac
 from importlib.resources import files
 import json
 import logging
@@ -102,7 +101,7 @@ class Status:
             return result
 
 
-def handler(status, jobs, deploy, token):
+def handler(status, jobs, deploy, test_display=None):
     class Handler(make_handler(status)):
         def do_GET(self):
             if self.path == '/':
@@ -119,11 +118,8 @@ def handler(status, jobs, deploy, token):
                 self.send_json(404, {'error': 'route not found'})
 
         def do_POST(self):
-            if self.path != '/api/install':
+            if self.path not in ('/api/install', '/api/test-state'):
                 self.send_json(404, {'error': 'route not found'})
-                return
-            if not token or not hmac.compare_digest(self.headers.get('Authorization', '').encode(), ('Bearer ' + token).encode()):
-                self.send_json(403, {'error': 'maintenance credential required'})
                 return
             origin = self.headers.get('Origin')
             if origin and urlsplit(origin).netloc != self.headers.get('Host'):
@@ -134,6 +130,15 @@ def handler(status, jobs, deploy, token):
                 if self.headers.get('Transfer-Encoding') or self.headers.get_content_type() != 'application/json' or not 0 < length <= 8192:
                     raise ValueError('use bounded application/json')
                 value = json.loads(self.rfile.read(length))
+                if self.path == '/api/test-state':
+                    if (test_display is None or not isinstance(value, dict)
+                            or set(value) != {'rig', 'state'}):
+                        raise ValueError('expected rig and test state')
+                    rig = next((r for r in status.rigs if r['id'] == value['rig']), None)
+                    if rig is None:
+                        raise ValueError('unknown rig')
+                    self.send_json(200, test_display(rig, value['state']))
+                    return
                 if not isinstance(value, dict) or set(value) != {'rig', 'release'}:
                     raise ValueError('expected rig and release')
                 identifier(value['release'], 'release')
@@ -142,8 +147,10 @@ def handler(status, jobs, deploy, token):
                     raise ValueError('unknown rig')
                 action = deploy(rig, value['release'])
                 self.send_json(202, jobs.start(action))
-            except (ValueError, OSError) as error:
+            except ValueError as error:
                 self.send_json(422, {'error': str(error)})
+            except OSError as error:
+                self.send_json(503, {'error': str(error)})
     return Handler
 
 
@@ -167,8 +174,11 @@ def main() -> None:
         directory = args.releases / release
         if directory.resolve().parent != args.releases.resolve():
             raise ValueError('invalid release')
-        return deployment_action(rig, directory, token=os.environ.get('PINRIG_MAINTENANCE_TOKEN', ''))
-    server = HTTPServer((args.bind, args.port), handler(status, jobs, deploy, os.environ.get('PINRIG_MAINTENANCE_TOKEN', '')))
+        return deployment_action(rig, directory)
+    def test_display(rig, state):
+        return request_json(rig['url'].rstrip('/') + '/api/test-state', {'state': state})
+    server = HTTPServer((args.bind, args.port),
+                        handler(status, jobs, deploy, test_display))
     targets = {r['id']: r['url'] for r in config['rigs']}
     mappings = {r['id']: r['scenes'] for r in config['rigs']}
     def poll(rig):

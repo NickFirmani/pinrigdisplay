@@ -30,7 +30,7 @@ def accept_obs(authority, value: object) -> None:
     authority.observe_obs(live, valid_for)
 
 
-def make_rig_handler(authority, *, token: str = '', maintenance=None, maintenance_token: str = ''):
+def make_rig_handler(authority, *, token: str = '', maintenance=None):
     class Handler(make_handler(authority)):
         def do_GET(self):
             if self.path == '/':
@@ -55,7 +55,8 @@ def make_rig_handler(authority, *, token: str = '', maintenance=None, maintenanc
                 super().do_GET()
 
         def do_POST(self):
-            if self.path not in ('/api/obs', '/api/messages', '/api/clear', '/api/firmware'):
+            if self.path not in ('/api/obs', '/api/messages', '/api/clear', '/api/firmware',
+                                 '/api/test-state'):
                 self.send_json(404, {'error': 'route not found'})
                 return
             origin = self.headers.get('Origin')
@@ -65,9 +66,6 @@ def make_rig_handler(authority, *, token: str = '', maintenance=None, maintenanc
                 same_origin = False
             if not same_origin:
                 self.send_json(403, {'error': 'cross-origin requests are not accepted'})
-                return
-            if self.path == '/api/firmware' and (not maintenance or not maintenance_token or not hmac.compare_digest(self.headers.get('Authorization', '').encode(), ('Bearer ' + maintenance_token).encode())):
-                self.send_json(403, {'error': 'configured maintenance credential required'})
                 return
             if self.path == '/api/obs' and token and not hmac.compare_digest(
                     self.headers.get('Authorization', '').encode(), ('Bearer ' + token).encode()):
@@ -84,6 +82,13 @@ def make_rig_handler(authority, *, token: str = '', maintenance=None, maintenanc
                 if len(raw) != length:
                     raise ValueError('incomplete body')
                 value = json.loads(raw)
+                if self.path == '/api/test-state':
+                    if not isinstance(value, dict) or set(value) != {'state'}:
+                        raise ValueError('expected test state')
+                    reply = authority.set_test_state(value['state'])
+                    self.send_json(200, {'ok': True, 'state': value['state'],
+                                         'delivery': reply})
+                    return
                 if self.path == '/api/firmware':
                     if not isinstance(value, dict) or not {'release', 'clean'} <= set(value) or set(value) - {'release', 'clean', 'runtime'} or type(value['clean']) is not bool or type(value.get('runtime', False)) is not bool:
                         raise ValueError('expected release and clean boolean')
@@ -134,13 +139,14 @@ def run_delivery(authority, host, stop, *, clock=time.monotonic) -> None:
 
 
 def run_service(authority, host, stop, *, bind: str, port: int, videonode_url: str,
-                token: str = '', credentials: str = '', maintenance=None, maintenance_token: str = '', server_factory=HTTPServer,
+                token: str = '', credentials: str = '', maintenance=None, server_factory=HTTPServer,
                 thread_factory=threading.Thread) -> None:
     """Own the listener, workers and USB host, including partial-startup cleanup."""
     server = None
     workers = []
     try:
-        server = server_factory((bind, port), make_rig_handler(authority, token=token, maintenance=maintenance, maintenance_token=maintenance_token))
+        server = server_factory((bind, port), make_rig_handler(authority, token=token,
+                                                               maintenance=maintenance))
         # Drain accepted HTTP work before closing USB, so a late request cannot
         # reopen the serial connection after shutdown.
         server.daemon_threads = False
@@ -199,8 +205,7 @@ def main() -> None:
     maintenance = {'jobs': Jobs(args.interactions.parent / 'maintenance.json'), 'installer': FirmwareInstaller(host, args.serial, lock_path=args.interactions.parent / 'maintenance.lock', bootsel_mount=args.bootsel_mount), 'releases': args.releases}
     run_service(authority, host, stop, bind=args.bind, port=args.port,
                 videonode_url=args.videonode_url, token=os.environ.get('PINRIG_OBS_TOKEN', ''),
-                credentials=os.environ.get('VIDEONODE_CREDENTIALS', ''), maintenance=maintenance,
-                maintenance_token=os.environ.get('PINRIG_MAINTENANCE_TOKEN', ''))
+                credentials=os.environ.get('VIDEONODE_CREDENTIALS', ''), maintenance=maintenance)
 
 
 if __name__ == '__main__':

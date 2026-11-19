@@ -11,6 +11,7 @@
   label { display:block; margin-top:14px; font-weight:600 }
   input,select { width:100%; min-height:44px; border:1px solid #657789; border-radius:6px; padding:10px; background:#101820; color:inherit; font:inherit }
   button { margin-top:18px; padding:12px 18px; border:0; border-radius:6px; background:#9bd5ff; color:#10202c; font:inherit; font-weight:600; cursor:pointer }
+  button.secondary { background:#d5dde4 } .actions { display:flex; flex-wrap:wrap; gap:12px }
   button:disabled { opacity:.5; cursor:default } :focus-visible { outline:3px solid #76c8ff; outline-offset:3px }
   .stale { border-color:#edb95d } .muted { color:#a8b6c4 }
   dl { display:grid; grid-template-columns:minmax(110px,1fr) 2fr; gap:8px 16px }
@@ -21,11 +22,24 @@
   <section id="obs-panel"><h2>OBS</h2><dl id="obs"><dt>Status</dt><dd>Connecting…</dd></dl></section>
   <div id="rigs"></div>
   <section>
+    <h2>Display test</h2>
+    <p>Temporarily override one rig’s resolved state for 60 seconds. The rig service keeps ownership of USB delivery, reports the override in health status, and returns to automatic source resolution when the timer expires.</p>
+    <label for="test-target">Rig</label><select id="test-target"></select>
+    <label for="test-state">State</label><select id="test-state">
+      <option value="on_air">ON AIR</option>
+      <option value="camera_active">CAMERA ACTIVE</option>
+      <option value="camera_inactive">CAMERA INACTIVE</option>
+      <option value="unknown">UNKNOWN</option>
+    </select>
+    <div class="actions"><button id="test-apply" type="button">Apply test state</button>
+      <button id="test-auto" class="secondary" type="button">Return to automatic</button></div>
+    <p id="test-result" role="status" aria-live="polite"></p>
+  </section>
+  <section>
     <h2>Install or update rig software</h2>
     <p>Choose a configured rig and a staged software release. The rig’s management API must be bootstrapped and configured first.</p>
     <label for="target">Rig</label><select id="target"></select>
     <label for="release">Release</label><input id="release" required>
-    <label for="token">Maintenance credential</label><input id="token" type="password" autocomplete="off">
     <button id="install" type="button">Install rig software</button><p id="job" role="status" aria-live="polite"></p>
   </section>
 </main>
@@ -56,7 +70,9 @@ async function refresh() {
     el('job').textContent=jobText(data.maintenance);
     el('install').disabled=data.maintenance.state==='running';
     if(!el('target').options.length) for(const rig of data.rigs) {
-      const option=document.createElement('option'); option.value=rig.id; option.textContent=rig.id; el('target').append(option);
+      for(const id of ['target','test-target']) {
+        const option=document.createElement('option'); option.value=rig.id; option.textContent=rig.id; el(id).append(option);
+      }
     }
     el('rigs').replaceChildren(...data.rigs.map(rig=>{
       const section=document.createElement('section'); if(rig.stale)section.className='stale';
@@ -68,7 +84,9 @@ async function refresh() {
         'Rig software':rig.status?.software_release || rig.status?.software_version,
         'Display firmware':device?.firmware?.release,'USB':rig.stale?'Stale':host?.connected?'Connected':'Disconnected',
         'Display health':rig.stale || host?.device_status_stale?'Stale':device?.healthy?'Healthy':'Unavailable',
-        'Displayed state':device?.displayed_state,'Source status':rig.status?.reason,
+        'Displayed state':device?.displayed_state,
+        'Test override':rig.status?.test_override?rig.status.test_override.state+' · '+rig.status.test_override.remaining.toFixed(1)+' seconds remaining':'Automatic',
+        'Source status':rig.status?.reason,
         'Videonode':rig.stale || !video?.fresh || video.active==null?'Unknown / stale':(video.active?'Active':'Inactive')+' · '+age(video.age),
         'OBS delivery':rig.delivery.age==null?'No report':(rig.delivery.error || 'Delivered')+' · '+age(rig.delivery.age),
         'Tap receipts':host?.interaction_delivery,
@@ -83,11 +101,24 @@ async function refresh() {
 }
 el('install').onclick=async()=>{
   try {
-    const response=await fetch('/api/install',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+el('token').value},
+    const response=await fetch('/api/install',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({rig:el('target').value,release:el('release').value})});
     const value=await response.json(); if(!response.ok)throw Error(value.error); await refresh();
   } catch(error) { el('job').textContent=error.message; }
 };
+async function setTestState(state) {
+  el('test-apply').disabled=true; el('test-auto').disabled=true;
+  try {
+    const response=await fetch('/api/test-state',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({rig:el('test-target').value,state})});
+    const value=await response.json(); if(!response.ok)throw Error(value.error);
+    el('test-result').textContent=state==='automatic'?'Automatic source resolution restored.':'Testing '+state.replaceAll('_',' ')+' for up to 60 seconds.';
+    await refresh();
+  } catch(error) { el('test-result').textContent=error.message; }
+  finally { el('test-apply').disabled=false; el('test-auto').disabled=false; }
+}
+el('test-apply').onclick=()=>setTestState(el('test-state').value);
+el('test-auto').onclick=()=>setTestState('automatic');
 async function poll(){await refresh();setTimeout(poll,2000);} poll();
 </script>
 </html>

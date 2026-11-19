@@ -135,7 +135,9 @@ firmware reports an unknown release. Firmware status retains requested/displayed
 state and revisions, render/touch errors and receipt outcomes.
 
 Rig `GET /api/status` adds `status_schema: 1`, `software_version`,
-`software_release`, `source_ages`, and `sources` (age, freshness and evidence values) to existing authority/USB status. Embedded
+`software_release`, `source_ages`, `sources` (age, freshness and evidence values),
+and a nullable `test_override` containing its state and remaining seconds to
+existing authority/USB status. Embedded
 host status includes `device_status_age`, `device_status_stale`, and `maintenance`.
 A cached device snapshot remains diagnostic data after disconnect, marked stale.
 Ages are local monotonic durations, never timestamps to compare between machines.
@@ -144,23 +146,30 @@ Rig `GET /api/releases` lists staged release directories; `GET /api/maintenance`
 returns the latest persistent job. `POST /api/firmware` takes `release`, `clean`
 and optional `runtime` booleans. Stream `GET /api/status` contains OBS diagnostics,
 independently aged rig reports and its latest deployment job. `POST /api/install`
-takes configured `rig` and staged software `release`. Maintenance requests require
-a configured Bearer maintenance token and reject cross-origin browser requests.
-They return an accepted job (202), with phases and final success/error polled via
+takes configured `rig` and staged software `release`. Maintenance requests trust
+the local network and reject cross-origin browser requests. They return an
+accepted job (202), with phases and final success/error polled via
 status. A restarted in-progress job becomes failed, never assumed successful.
-No credentials are returned. `/healthz` remains process presence only.
+`/healthz` remains process presence only.
+
+Rig `POST /api/test-state` takes `{"state":"on_air"}` (or `camera_active`,
+`camera_inactive`, `unknown`, or `automatic`). A non-automatic state overrides
+resolved source evidence for at most
+60 seconds while preserving that evidence; `automatic` clears it immediately.
+The stream overview proxies the same operation as `POST /api/test-state` with
+`rig` and `state`.
 
 
 ### Rig software management API
 
 The independent `pinrig-manager` service (default port 48198) stays up across
-`pinrig-rig` updates. Every route requires the maintenance Bearer credential;
-browser requests must be same-origin. The stream configuration supplies each
+`pinrig-rig` updates. It trusts its local network; browser requests must be
+same-origin. The stream configuration supplies each
 rig's explicit `management_url`.
 
 | Request | Contract |
 | --- | --- |
-| `GET /api/health` | Authenticated management schema/process check. |
+| `GET /api/health` | Management schema/process check. |
 | `PUT /api/releases/RELEASE` | `application/x-tar`, bounded Content-Length (64 MiB maximum). Regular files only; traversal, links, duplicate paths, unlisted files and checksum failures are rejected. Existing release contents are immutable. |
 | `POST /api/install` | JSON `{"release":"RELEASE"}`; returns 202 and a persistent job ID. One installation at a time. |
 | `GET /api/maintenance` | Latest persisted job, for recovery after a lost install response or overview restart. |

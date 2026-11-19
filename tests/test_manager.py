@@ -66,10 +66,8 @@ class ManagerTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     installer.install(invalid, lambda phase: None)
 
-    def request(self, handler, method, path, body=b'', *, token='secret', content_type='application/json', origin=None):
+    def request(self, handler, method, path, body=b'', *, content_type='application/json', origin=None):
         fields = {'Host': 'rig:48198', 'Content-Type': content_type, 'Content-Length': str(len(body))}
-        if token:
-            fields['Authorization'] = 'Bearer ' + token
         if origin:
             fields['Origin'] = origin
         raw = (method + ' ' + path + ' HTTP/1.0\r\n' + ''.join(k + ': ' + v + '\r\n' for k, v in fields.items()) + '\r\n').encode() + body
@@ -78,7 +76,7 @@ class ManagerTests(unittest.TestCase):
         header, body = connection.output.getvalue().split(b'\r\n\r\n', 1)
         return int(header.split()[1]), json.loads(body)
 
-    def test_api_upload_install_and_poll_with_authentication(self):
+    def test_api_upload_install_and_poll_on_trusted_network(self):
         with TemporaryDirectory() as temp:
             root = Path(temp)
             source = root / 'source'
@@ -86,9 +84,8 @@ class ManagerTests(unittest.TestCase):
             fixtures.DeploymentTests().software(source)
             installer = SoftwareInstaller(root / 'catalog', Path('/trusted/helper'), Path('/trusted/config'), run=lambda *a, **kw: None)
             jobs = Jobs(root / 'job.json')
-            handler = make_manager_handler(jobs, installer, 'secret')
+            handler = make_manager_handler(jobs, installer)
             data = archive(source)
-            self.assertEqual(self.request(handler, 'PUT', '/api/releases/software-1', data, token='', content_type='application/x-tar')[0], 403)
             self.assertEqual(self.request(handler, 'PUT', '/api/releases/software-1', data, content_type='application/x-tar', origin='http://evil')[0], 403)
             self.assertEqual(self.request(handler, 'PUT', '/api/releases/software-1', data, content_type='application/x-tar')[0], 200)
             code, job = self.request(handler, 'POST', '/api/install', json.dumps({'release': 'software-1'}).encode())
@@ -99,7 +96,6 @@ class ManagerTests(unittest.TestCase):
             self.assertEqual(result['state'], 'succeeded')
             self.assertEqual(self.request(handler, 'GET', '/api/maintenance')[1]['id'], job['id'])
             self.assertEqual(self.request(handler, 'GET', '/api/health')[1]['management_schema'], 1)
-            self.assertEqual(self.request(handler, 'GET', '/api/health', token='')[0], 403)
             self.assertEqual(self.request(handler, 'GET', '/api/jobs/unknown')[0], 404)
             self.assertEqual(self.request(handler, 'POST', '/api/install', b'{"release":"../escape"}')[0], 422)
 
@@ -110,17 +106,17 @@ class BootstrapTests(unittest.TestCase):
             root = Path(temp)
             (root / 'etc/systemd/system').mkdir(parents=True)
             calls = []
-            (root / 'etc/pinrig-rig.env').write_text('PINRIG_MAINTENANCE_TOKEN=secret\n')
-            setup_manager(root / 'bundle', {'id': 'rig1', 'maintenance_token': 'secret', 'obs_token': 'other', 'serial': '/dev/test'},
+            setup_manager(root / 'bundle', {'id': 'rig1', 'obs_token': 'other', 'serial': '/dev/test'},
                           root, lambda *args: calls.append(args), verify=lambda *args: None)
             helper = root / 'usr/local/lib/pinrig/install_linux.py'
             self.assertIn('def install(', helper.read_text())
             config = json.loads((root / 'etc/pinrig-rig.json').read_text())
-            self.assertNotIn('maintenance_token', config)
+            self.assertNotIn('obs_token', config)
             unit = (root / 'etc/systemd/system/pinrig-manager.service').read_text()
             self.assertIn('/opt/pinrig-manager/bin/pinrig-manager', unit)
             self.assertNotIn('/pinrig-rig/current/', unit)
             self.assertIn('User=root', unit)
+            self.assertNotIn('EnvironmentFile=', unit)
 
     def test_root_metadata_never_follows_application_symlink(self):
         from tools.install_linux import write_release_metadata

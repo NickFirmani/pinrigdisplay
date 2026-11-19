@@ -38,7 +38,7 @@ def validate_software(directory: Path) -> dict:
     return manifest
 
 
-def upload_release(url: str, directory: Path, *, headers: dict) -> dict:
+def upload_release(url: str, directory: Path) -> dict:
     """Upload only manifest-validated files as a bounded tar payload."""
     import io
     import tarfile
@@ -51,13 +51,14 @@ def upload_release(url: str, directory: Path, *, headers: dict) -> dict:
             archive.add(directory / name, arcname=name, recursive=False)
     if payload.tell() > MAX_SOFTWARE_BYTES:
         raise ValueError('software archive exceeds size limit')
-    request = Request(url, payload.getvalue(), {'Content-Type': 'application/x-tar', **headers}, method='PUT')
+    request = Request(url, payload.getvalue(), {'Content-Type': 'application/x-tar'},
+                      method='PUT')
     with urlopen(request, timeout=30) as response:
         return read_json(response)
 
 
-def deployment_action(rig: dict, directory: Path, *, token: str = '',
-                      get=request_json, post=request_json, upload=upload_release,
+def deployment_action(rig: dict, directory: Path, *, get=request_json,
+                      post=request_json, upload=upload_release,
                       clock=time.monotonic, delay=time.sleep):
     """Upload and install through the rig management API, then verify the rig."""
     manifest = validate_software(directory)
@@ -66,17 +67,14 @@ def deployment_action(rig: dict, directory: Path, *, token: str = '',
     parsed = urlsplit(base)
     if parsed.scheme not in ('http', 'https') or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise ValueError('configure an HTTP(S) management_url for this rig')
-    if not token:
-        raise ValueError('configure a maintenance credential')
-    headers = {'Authorization': 'Bearer ' + token}
     def action(phase):
         phase('uploading release')
-        uploaded = upload(base + '/api/releases/' + manifest['release'], directory, headers=headers)
+        uploaded = upload(base + '/api/releases/' + manifest['release'], directory)
         if uploaded.get('release') != manifest['release']:
             raise ValueError('management API returned the wrong release')
         phase('starting installation')
         try:
-            job = post(base + '/api/install', {'release': manifest['release']}, headers=headers)
+            job = post(base + '/api/install', {'release': manifest['release']})
         except (OSError, ValueError) as error:
             raise OSError('Installation request failed; inspect management /api/maintenance before retrying: ' + str(error)) from error
         if not isinstance(job.get('id'), str):
@@ -84,7 +82,7 @@ def deployment_action(rig: dict, directory: Path, *, token: str = '',
         deadline = clock() + 600
         while clock() < deadline:
             try:
-                current = get(base + '/api/jobs/' + job['id'], headers=headers)
+                current = get(base + '/api/jobs/' + job['id'])
             except (OSError, ValueError) as error:
                 raise OSError('Lost management connection for job ' + job['id'] + '; inspect /api/maintenance before retrying: ' + str(error)) from error
             if current.get('id') != job['id']:

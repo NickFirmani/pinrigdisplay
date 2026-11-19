@@ -2,11 +2,12 @@
 from .identity import software_identity
 import threading
 import time
-from pinrig_protocol.commands import Command, identifier
-from .policy import Observation, resolve
+from pinrig_protocol.commands import Command, STATES, identifier
+from .policy import Observation, Resolution, resolve
 
 SOURCE_MAX_AGE = 30.
 OBS_VALID_FOR = 8.
+TEST_OVERRIDE_SECONDS = 60.
 
 
 class Authority:
@@ -19,6 +20,8 @@ class Authority:
         self.sender_lock = threading.Lock()
         self.observations = {}
         self.obs_until = 0.
+        self.test_state = None
+        self.test_until = 0.
         self.last_delivery = None
         self.message_details = {}
 
@@ -36,10 +39,25 @@ class Authority:
     def resolution(self):
         with self.lock:
             now = self.clock()
+            if self.test_state is not None and now < self.test_until:
+                return Resolution(self.test_state, 'Display test override')
             observations = [o for source, o in self.observations.items()
                             if source != 'obs' or now < self.obs_until]
             return resolve(observations, rig=self.rig, required_sources={'obs', 'videonode'},
                            now=now, max_age=SOURCE_MAX_AGE)
+
+    def set_test_state(self, state: str) -> dict:
+        """Apply a bounded display override, or restore automatic resolution."""
+        if not isinstance(state, str) or (state != 'automatic' and state not in STATES):
+            raise ValueError('test state must be automatic or a supported display state')
+        with self.lock:
+            if state == 'automatic':
+                self.test_state = None
+                self.test_until = 0.
+            else:
+                self.test_state = state
+                self.test_until = self.clock() + TEST_OVERRIDE_SECONDS
+        return self.publish()
 
     def send(self, operation: str, params: dict, *, request_id=None) -> dict:
         with self.sender_lock:
@@ -85,9 +103,14 @@ class Authority:
         with self.lock:
             details = dict(self.message_details)
             now = self.clock()
+            test_override = (None if self.test_state is None or now >= self.test_until else
+                             {'state': self.test_state,
+                              'remaining': max(0., self.test_until - now)})
             ages = {name: max(0., now - item.observed_at) for name, item in self.observations.items()}
             sources = {name: {'age': ages[name], 'live': item.live, 'active': item.local_use,
                 'fresh': now < self.obs_until if name == 'obs' else ages[name] <= SOURCE_MAX_AGE}
                 for name, item in self.observations.items()}
-        return {'status_schema': 1, **self.software, 'source_ages': ages, 'sources': sources, 'message_details': details, 'rig': self.rig, 'state': resolution.state, 'reason': resolution.reason,
+        return {'status_schema': 1, **self.software, 'source_ages': ages, 'sources': sources,
+                'test_override': test_override, 'message_details': details, 'rig': self.rig,
+                'state': resolution.state, 'reason': resolution.reason,
                 'host': host, 'state_delivery': self.last_delivery}

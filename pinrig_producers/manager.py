@@ -1,8 +1,6 @@
 """Independent rig software-management API; survives display-service updates."""
 import argparse
-import hmac
 import json
-import os
 from pathlib import Path
 import re
 import shutil
@@ -95,12 +93,9 @@ class SoftwareInstaller:
         return {'release': manifest['release']}
 
 
-def make_manager_handler(jobs: Jobs, installer: SoftwareInstaller, token: str):
+def make_manager_handler(jobs: Jobs, installer: SoftwareInstaller):
     class Handler(make_handler(jobs)):
-        def authorized(self) -> bool:
-            if not token or not hmac.compare_digest(self.headers.get('Authorization', '').encode(), ('Bearer ' + token).encode()):
-                self.send_json(403, {'error': 'maintenance credential required'})
-                return False
+        def same_origin(self) -> bool:
             try:
                 origin = self.headers.get('Origin')
                 if origin and urlsplit(origin).netloc != self.headers.get('Host'):
@@ -117,7 +112,7 @@ def make_manager_handler(jobs: Jobs, installer: SoftwareInstaller, token: str):
             return length
 
         def do_GET(self):
-            if not self.authorized():
+            if not self.same_origin():
                 return
             if self.path == '/api/health':
                 self.send_json(200, {'management_schema': 1, 'process': 'running'})
@@ -133,7 +128,7 @@ def make_manager_handler(jobs: Jobs, installer: SoftwareInstaller, token: str):
                 self.send_json(404, {'error': 'route not found'})
 
         def do_PUT(self):
-            if not self.authorized():
+            if not self.same_origin():
                 return
             if not self.path.startswith('/api/releases/'):
                 self.send_json(404, {'error': 'route not found'})
@@ -148,7 +143,7 @@ def make_manager_handler(jobs: Jobs, installer: SoftwareInstaller, token: str):
                 self.send_json(422, {'error': str(error)})
 
         def do_POST(self):
-            if not self.authorized():
+            if not self.same_origin():
                 return
             if self.path != '/api/install':
                 self.send_json(404, {'error': 'route not found'})
@@ -175,15 +170,12 @@ def main() -> None:
     parser.add_argument('--installer', type=Path, default=Path('/usr/local/lib/pinrig/install_linux.py'))
     parser.add_argument('--config', type=Path, default=Path('/etc/pinrig-rig.json'))
     args = parser.parse_args()
-    token = os.environ.get('PINRIG_MAINTENANCE_TOKEN', '')
-    if not token:
-        parser.error('PINRIG_MAINTENANCE_TOKEN must be configured')
     args.state.mkdir(parents=True, exist_ok=True)
     releases = args.state / 'releases'
     releases.mkdir(exist_ok=True, mode=0o755)
     jobs = Jobs(args.state / 'maintenance.json')
     installer = SoftwareInstaller(releases, args.installer, args.config)
-    server = HTTPServer((args.bind, args.port), make_manager_handler(jobs, installer, token))
+    server = HTTPServer((args.bind, args.port), make_manager_handler(jobs, installer))
     server.daemon_threads = False
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: threading.Thread(target=server.shutdown).start())

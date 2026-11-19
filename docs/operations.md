@@ -3,6 +3,23 @@
 Start at the stream overview (default port 48195), then follow a rig link
 (default 48194) for display details, booth messages and firmware maintenance.
 
+In the home topology, run `pinrig-stream` on the development PC. The Pi 4B runs
+only `pinrig-rig` and the independent `pinrig-manager`; it simulates one of the
+small production rig hosts rather than the OBS/stream PC.
+
+## Display test pane
+
+The stream overview can apply a display test override to one rig on the trusted
+local network. Choose ON AIR, CAMERA ACTIVE, CAMERA INACTIVE or UNKNOWN and inspect
+the rig health card while observing the physical panel. The rig remains the sole
+owner of USB delivery. It reports the active override and its remaining time,
+continues collecting OBS and videonode evidence underneath it, and returns to
+automatic resolution after 60 seconds or when **Return to automatic** is used.
+
+Test overrides are intentionally transient and are not a substitute for source
+integration tests. A rig-service restart also clears them; a lost producer lease
+still makes the Pico fall back to UNKNOWN.
+
 ## Booth messages
 
 Choose **Physical acknowledgment** for a card that stays until someone taps it
@@ -85,13 +102,15 @@ physical touch/pixel, restart or power-cycle checks.
 
 ## Home validation record — 7 November 2026
 
-On the Pi 4B (`admin@media-pi.local`, Python 3.13.5):
+With this PC as the stream host and the Pi 4B (`admin@media-pi.local`, Python
+3.13.5) as the rig host:
 
 - Earlier firmware installation verified `step4-home-1` on MicroPython 1.29.0.
   API-to-USB ON AIR/UNKNOWN, retained messages, Send/Clear and slow checks of all
   four display states passed. Physical pixels/taps remain attended acceptance.
-- Local bootstrap installed the revised overview and management API using
-  `step4-api-10`. Through the overview's HTTP installation control, a second
+- An earlier local bootstrap installed the revised overview on the Pi for API
+  validation; that placement is superseded by the home topology above. The
+  management API used `step4-api-10`. Through the overview's HTTP installation control, a second
   deployment release (`step4-api-11`, same application code) uploaded, installed
   and verified successfully. The management process stayed running across the
   rig restart. No service SSH key was installed.
@@ -100,7 +119,8 @@ On the Pi 4B (`admin@media-pi.local`, Python 3.13.5):
   Reconnect the Pico before repeating live display checks. OBS and videonode
   were unavailable and appeared as unknown/unavailable.
 
-Home test links: [overview](http://media-pi.local:48197) and
-[rig](http://media-pi.local:48196). Management uses authenticated port 48198.
+Home test links: [overview on this PC](http://127.0.0.1:48195) and
+[rig on the Pi](http://media-pi.local:48196). The Pi management service uses
+local-network port 48198.
 Production defaults remain unchanged. BOOTSEL copying, physical pixels/taps,
 live OBS and both production rigs remain attended acceptance checks.

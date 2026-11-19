@@ -11,9 +11,9 @@ Production has two Armbian rigs. At home, configure just the Pi 4B rig.
 ## 1. Install the stream overview on the Linux OBS PC
 
 Copy the matching software bundle onto the PC. Create a private configuration
-file outside the checkout. Generate two credentials with
-`python3 -c 'import secrets; print(secrets.token_urlsafe(32))'`, once for OBS
-reports and once for maintenance; substitute them into this JSON:
+file outside the checkout. Generate one credential with
+`python3 -c 'import secrets; print(secrets.token_urlsafe(32))'` for OBS reports;
+substitute it into this JSON:
 
 ```json
 {
@@ -21,7 +21,6 @@ reports and once for maintenance; substitute them into this JSON:
   "bind": "0.0.0.0",
   "obs_url": "ws://127.0.0.1:4455",
   "obs_token": "REPLACE_WITH_GENERATED_OBS_TOKEN",
-  "maintenance_token": "REPLACE_WITH_GENERATED_MAINTENANCE_TOKEN",
   "rigs": [
     {
       "id": "rig1",
@@ -50,9 +49,14 @@ password. Restart with `sudo systemctl restart pinrig-stream`.
 Expected: `systemctl is-active pinrig-stream` returns `active`; open
 `http://STREAM_PC_ADDRESS:48195`. Until rigs exist, they appear unreachable.
 The setup creates/reuses `pinrigdisplay`, stages a versioned venv under
-`/opt/pinrig-stream`, and installs a systemd service. A rerun preserves credentials.
+`/opt/pinrig-stream`, and installs a systemd service. A rerun preserves the OBS credential.
 For failure, inspect `journalctl -u pinrig-stream -n 100 --no-pager`, correct the
 reported prerequisite/configuration issue, then rerun the installer.
+
+For home testing, the development PC is the stream PC and `media-pi` is the rig
+host. Do not also run `pinrig-stream` on `media-pi`; one stream authority should
+report OBS evidence for the configured rigs. The Pi continues to run
+`pinrig-rig` and `pinrig-manager` independently.
 
 ## 2. Install the rig service on each Linux host
 
@@ -67,12 +71,11 @@ Create a private rig configuration outside the checkout:
   "serial": "/dev/serial/by-id/ACTUAL_DEVICE",
   "bind": "0.0.0.0",
   "management_port": 48198,
-  "obs_token": "SAME_OBS_TOKEN_AS_STREAM_PC",
-  "maintenance_token": "SAME_MAINTENANCE_TOKEN_AS_STREAM_PC"
+  "obs_token": "SAME_OBS_TOKEN_AS_STREAM_PC"
 }
 ```
 
-Use the credentials generated in step 1 and the actual USB path collected on
+Use the OBS credential generated in step 1 and the actual USB path collected on
 this rig. Optional local fields include `port`, `videonode_url`, `bootsel_mount`
 and `management_bind`. Keep the rig and management ports distinct. Then run,
 on that rig:
@@ -92,8 +95,8 @@ see the [log commands](operations.md#logs).
 ## 3. Install the display from the rig page
 
 Copy the complete display bundle to `/var/lib/pinrig-host/releases/RELEASE` on
-its rig, readable by `pinrigdisplay`. Open the rig page, select the release and
-enter its maintenance credential. Installation jobs keep HTTP available while
+its rig, readable by `pinrigdisplay`. Open the rig page and select the release.
+Installation jobs keep HTTP available while
 normal USB delivery and booth commands pause. Uploads use only validated files,
 write `main.py` last, reset, then verify firmware identity, actual runtime and
 reported display health.
@@ -125,8 +128,8 @@ service restart. Never upload with an unrelated process still owning that USB po
    Older rig software rejects the eight-image bundle because it expects 32
    additional sign images. Stage the matching Linux bundle at
    `/var/lib/pinrig-stream/releases/RELEASE` on the stream PC, readable by
-   `pinrigdisplay`. In the overview select the rig and release, enter the
-   maintenance credential, and choose **Install rig software**. Wait for the
+   `pinrigdisplay`. In the overview select the rig and release, then choose
+   **Install rig software**. Wait for the
    verified release and healthy rig service.
 2. Stage the display bundle on that rig and follow step 3. The job reports
    its phase and any error. Correct the reported issue before retrying.

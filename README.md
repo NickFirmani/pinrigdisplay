@@ -7,7 +7,7 @@ Home testing: this PC → Pi 4B → USB → Pico 2 W → SPI → display.
 The stream PC runs `pinrig-stream`: OBS reporting plus an overview of one or
 more rigs and rig software installation. Each rig runs `pinrig-rig`, embedding
 `pinrig_host` USB delivery and serving its booth/status page and display firmware
-installer. Rig software updates use an authenticated management API that stays
+installer. Rig software updates use a local-network management API that stays
 available during display-service restarts; bootstrap installs it locally. The Pico alone controls SPI and touch; it has no webpage.
 
 See [install/update](docs/deployment.md), [operations](docs/operations.md),

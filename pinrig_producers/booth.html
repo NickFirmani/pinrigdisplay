@@ -57,7 +57,6 @@
 <section><h2>Display maintenance</h2><p id="versions"></p>
 <p>Choose a staged release. To install the runtime too, connect the Pico in BOOTSEL mode and mount it on this rig first.</p>
 <label>Release <select id="release"></select></label>
-<label>Maintenance credential <input id="maintenance-token" type="password" autocomplete="off"></label>
 <label><input id="runtime" type="checkbox"> Install bundled runtime (Pico must be in BOOTSEL mode on the configured mount)</label>
 <label><input id="clean" type="checkbox"> Clean reflash (discards pending tap receipts)</label>
 <button id="install-firmware" type="button">Install firmware</button><pre id="maintenance-result"></pre></section>
@@ -78,7 +77,7 @@ async function maintenanceRefresh() {
 }
 document.getElementById('install-firmware').onclick=async () => {
   try {
-    const response=await fetch('/api/firmware', {method:'POST', headers:{'Content-Type':'application/json', Authorization:'Bearer '+document.getElementById('maintenance-token').value}, body:JSON.stringify({release:document.getElementById('release').value, clean:document.getElementById('clean').checked, runtime:document.getElementById('runtime').checked})});
+    const response=await fetch('/api/firmware', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({release:document.getElementById('release').value, clean:document.getElementById('clean').checked, runtime:document.getElementById('runtime').checked})});
     const result=await response.json(); if (!response.ok) throw new Error(result.error || 'Installation failed');
     await maintenanceRefresh();
   } catch(error) { document.getElementById('maintenance-result').textContent=error.message; }
