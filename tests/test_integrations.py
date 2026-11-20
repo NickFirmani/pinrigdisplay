@@ -51,6 +51,26 @@ class AuthorityTests(unittest.TestCase):
         self.authority.observe_obs(True, 8)
         self.assertEqual(self.authority.resolution().state, 'on_air')
 
+    def test_status_explains_the_selected_branch_and_override(self):
+        self.authority.observe_video(True)
+        status = self.authority.status()
+        self.assertEqual(status['state'], 'unknown')
+        self.assertIn('No fresh report from OBS.', status['decision'])
+        self.authority.observe_obs(False, 8)
+        status = self.authority.status()
+        self.assertEqual(status['state'], 'camera_active')
+        self.assertEqual(status['decision'], [
+            'All required sources confirm this rig is off air.',
+            'Videonode confirms local camera use.',
+        ])
+        self.authority.observe_obs(True, 8)
+        self.assertIn('OBS confirms this rig is contributing to the live output.',
+                      self.authority.status()['decision'])
+        self.authority.set_test_state('camera_inactive')
+        status = self.authority.status()
+        self.assertEqual(status['state'], 'camera_inactive')
+        self.assertIn('The operator selected this state in Display test.', status['decision'])
+
     def test_expiry_is_independent_and_recovery_is_immediate(self):
         self.authority.observe_obs(False, 8)
         self.authority.observe_video(True)

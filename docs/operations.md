@@ -15,7 +15,10 @@ small production rig hosts rather than the OBS/stream PC.
 
 **Status** starts with Videonode activity and the USB display connection for
 each rig, followed by the OBS connection. Idle means Videonode reports zero stream consumers. OBS can
-show Connected while streaming is stopped. Detailed diagnostics follow below.
+show Connected while streaming is stopped. Each rig's **State decision** lists
+the checks that led to its selected state, including missing evidence or a
+display test override. **State reported by Pico** shows what the display
+confirmed, which can lag behind the decision.
 
 ## Display test pane
 

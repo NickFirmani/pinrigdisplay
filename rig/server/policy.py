@@ -26,6 +26,7 @@ class Observation:
 class Resolution:
     state: str
     reason: str
+    decision: tuple[str, ...] = ()
 
 
 def resolve(observations: list[Observation], *, rig: str, required_sources: set[str],
@@ -41,16 +42,37 @@ def resolve(observations: list[Observation], *, rig: str, required_sources: set[
                 latest[obs.source] = obs
             elif obs.observed_at == previous.observed_at and obs != previous:
                 latest[obs.source] = Observation(obs.source, rig, obs.observed_at, None, None)
-    values = list(latest.values())
-    if any(o.live is True for o in values):
-        return Resolution('on_air', 'Confirmed live contribution for this rig')
-    if set(latest) != required_sources or any(o.live is None for o in values):
-        return Resolution('unknown', 'Live evidence missing or stale')
-    if any(o.local_use is True for o in values):
-        return Resolution('camera_active', 'Confirmed local use')
-    if any(o.local_use is None for o in values):
-        return Resolution('unknown', 'Local-use evidence missing')
-    return Resolution('camera_inactive', 'All required sources confirm no use')
+    def names(sources):
+        labels = {'obs': 'OBS', 'videonode': 'Videonode'}
+        return ', '.join(labels.get(source, source) for source in sorted(sources))
+
+    live = {source for source, obs in latest.items() if obs.live is True}
+    if live:
+        return Resolution('on_air', 'Confirmed live contribution for this rig', (
+            f'{names(live)} confirms this rig is contributing to the live output.',
+            'Live contribution takes precedence over local camera activity.',
+        ))
+    missing = required_sources - latest.keys()
+    unknown = {source for source, obs in latest.items() if obs.live is None}
+    if missing or unknown:
+        checks = ['No fresh source confirms this rig is on air.']
+        if missing:
+            checks.append(f'No fresh report from {names(missing)}.')
+        if unknown:
+            checks.append(f'Live contribution is unknown in the report from {names(unknown)}.')
+        checks.append('The rig needs a definite live result before checking local camera activity.')
+        return Resolution('unknown', 'Live evidence missing or stale', tuple(checks))
+    checks = ['All required sources confirm this rig is off air.']
+    active = {source for source, obs in latest.items() if obs.local_use is True}
+    if active:
+        checks.append(f'{names(active)} confirms local camera use.')
+        return Resolution('camera_active', 'Confirmed local use', tuple(checks))
+    unknown = {source for source, obs in latest.items() if obs.local_use is None}
+    if unknown:
+        checks.append(f'Local camera activity is unknown in the report from {names(unknown)}.')
+        return Resolution('unknown', 'Local-use evidence missing', tuple(checks))
+    checks.append('All required sources confirm no local camera use.')
+    return Resolution('camera_inactive', 'All required sources confirm no use', tuple(checks))
 
 
 class Selection:

@@ -41,13 +41,18 @@ class Authority:
 
     def resolution(self):
         with self.lock:
-            now = self.clock()
-            if self.test_state is not None and now < self.test_until:
-                return Resolution(self.test_state, 'Display test override')
-            observations = [o for source, o in self.observations.items()
-                            if source != 'obs' or now < self.obs_until]
-            return resolve(observations, rig=self.rig, required_sources={'obs', 'videonode'},
-                           now=now, max_age=SOURCE_MAX_AGE)
+            return self._resolution_at(self.clock())
+
+    def _resolution_at(self, now: float) -> Resolution:
+        if self.test_state is not None and now < self.test_until:
+            return Resolution(self.test_state, 'Display test override', (
+                'The operator selected this state in Display test.',
+                'Automatic state selection resumes when the override expires or is cleared.',
+            ))
+        observations = [o for source, o in self.observations.items()
+                        if source != 'obs' or now < self.obs_until]
+        return resolve(observations, rig=self.rig, required_sources={'obs', 'videonode'},
+                       now=now, max_age=SOURCE_MAX_AGE)
 
     def set_test_state(self, state: str) -> dict:
         """Apply a bounded display override, or restore automatic resolution."""
@@ -162,12 +167,12 @@ class Authority:
         return self.send('cancel_message', {'message_id': message_id})
 
     def status(self) -> dict:
-        resolution = self.resolution()
         host = self.client.send('status', {})
         chat = self._chat_status(host.get('result') or {})
         with self.lock:
             details = dict(self.message_details)
             now = self.clock()
+            resolution = self._resolution_at(now)
             test_override = (None if self.test_state is None or now >= self.test_until else
                              {'state': self.test_state,
                               'remaining': max(0., self.test_until - now)})
@@ -177,5 +182,5 @@ class Authority:
                 for name, item in self.observations.items()}
         return {'status_schema': 1, **self.software, 'source_ages': ages, 'sources': sources,
                 'test_override': test_override, 'message_details': details, 'rig': self.rig,
-                'state': resolution.state, 'reason': resolution.reason,
+                'state': resolution.state, 'reason': resolution.reason, 'decision': list(resolution.decision),
                 'host': host, 'chat': chat, 'state_delivery': self.last_delivery}

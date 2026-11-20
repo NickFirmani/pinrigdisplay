@@ -451,15 +451,35 @@ async function refresh() {
     el('rigs').replaceChildren(...data.rigs.map(rig=>{
       const section=document.createElement('section'); if(rig.stale)section.className='stale';
       const heading=document.createElement('h2'); const link=document.createElement('a');
-      link.href=rig.url; link.textContent=rig.id+' · Open rig page'; heading.append(link); section.append(heading);
+      link.href=rig.url; link.textContent=rigLabel(rig)+' · Open rig page'; heading.append(link); section.append(heading);
       const detail=document.createElement('dl'); const host=rig.status?.host?.result; const device=host?.device;
       const video=rig.status?.sources?.videonode;
-      fields(detail, {'Rig connection':rig.stale?'Stale / unreachable':'Reachable','Last rig report':age(rig.age),
+      const decision = document.createElement('div');
+      const decisionHeading = document.createElement('h3');
+      decisionHeading.textContent = 'State decision';
+      const summary = document.createElement('p');
+      const state = displayLabels[rig.status?.state];
+      summary.textContent = rig.stale || !state ? 'Waiting for a fresh rig report.' :
+        state + (rig.status.reason ? ' · ' + rig.status.reason : '');
+      decision.append(decisionHeading, summary);
+      if (!rig.stale && Array.isArray(rig.status?.decision) && rig.status.decision.length) {
+        const list = document.createElement('ol');
+        for (const check of rig.status.decision) {
+          const item = document.createElement('li');
+          item.textContent = check;
+          list.append(item);
+        }
+        decision.append(list);
+      }
+      section.append(decision);
+      const displayed = displayLabels[device?.displayed_state];
+      fields(detail, {'State reported by Pico': rig.stale || !host?.connected || host.device_status_stale
+        ? 'Unavailable or stale' : displayed,
+        'Rig connection':rig.stale?'Stale / unreachable':'Reachable','Last rig report':age(rig.age),
         'Rig software':rig.status?.software_release || rig.status?.software_version,
         'Display firmware':device?.firmware?.release,'USB':rig.stale?'Stale':host?.connected?'Connected':'Disconnected',
         'Display health':rig.stale || host?.device_status_stale?'Stale':device?.healthy?'Healthy':'Unavailable',
         'Test override':rig.status?.test_override?rig.status.test_override.state+' · '+rig.status.test_override.remaining.toFixed(1)+' seconds remaining':'Automatic',
-        'Source status':rig.status?.reason,
         'Videonode':rig.stale || !video?.fresh || video.active==null?'Unknown / stale':(video.active?'Active':'Inactive')+' · '+age(video.age),
         'OBS delivery':rig.delivery.age==null?'No report':(rig.delivery.error || 'Delivered')+' · '+age(rig.delivery.age),
         'Twitch chat delivery':rig.chat_delivery || 'No delivery',
